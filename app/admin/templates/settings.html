@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.settings") }}</h1>
+</div>
+
+<section class="card narrow">
+  <div class="card-head"><h2>{{ t("settings.change_password") }}</h2></div>
+  <form method="post" action="/admin/settings/password" class="stack">
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    <label class="field"><span>{{ t("settings.current_password") }}</span><input type="password" name="old_password" autocomplete="current-password" required></label>
+    <label class="field"><span>{{ t("settings.new_password") }}</span><input type="password" name="new_password" autocomplete="new-password" minlength="8" required></label>
+    <label class="field"><span>{{ t("settings.confirm_password") }}</span><input type="password" name="confirm_password" autocomplete="new-password" minlength="8" required></label>
+    <p class="muted">{{ t("settings.password_hint") }}</p>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">{{ t("settings.change_password_submit") }}</button></div>
+  </form>
+</section>
+
+<section class="card narrow">
+  <div class="card-head"><h2>{{ t("settings.audit_retention") }}</h2></div>
+  <p class="muted">{{ t("settings.retention_hint") }}</p>
+  <form method="post" action="/admin/settings/retention" class="stack">
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    <label class="field">
+      <span>{{ t("settings.retention_days") }}</span>
+      <input type="number" name="retention_days" value="{{ retention_days }}" min="1" max="3650" required>
+    </label>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">{{ t("settings.save_retention") }}</button></div>
+  </form>
+  <hr class="divider">
+  <form method="post" action="/admin/settings/cleanup" class="inline-form" data-confirm="{{ t('settings.confirm_cleanup') }}">
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    <button type="submit" class="btn btn-danger">{{ t("settings.cleanup_now") }}</button>
+  </form>
+</section>
+
+<section class="card narrow">
+  <div class="card-head"><h2>{{ t("settings.allowlist") }}</h2></div>
+  <p class="muted">{{ t("settings.allowlist_hint") }}</p>
+  {% if not export_enabled %}
+  <p class="muted small">{{ t("settings.export_disabled_allowlist") }}</p>
+  {% endif %}
+  <form method="post" action="/admin/settings/allowlist" class="stack">
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    {% for group in allowlists %}
+    <label class="field">
+      <span>{{ group.label }}</span>
+      <textarea name="{{ group.field }}" rows="4" spellcheck="false">{{ group.text }}</textarea>
+      <em class="hint">{{ group.source_text }}{% if group.allow_all %}{{ t("settings.allowlist_empty_note") }}{% endif %}</em>
+    </label>
+    {% endfor %}
+    <p class="muted small">{{ t("settings.source_ip_hint") }}</p>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">{{ t("settings.save_allowlist") }}</button></div>
+  </form>
+</section>
+{% endblock %}

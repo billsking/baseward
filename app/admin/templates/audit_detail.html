@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.audit_detail") }}</h1>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/admin/audit">{{ t("common.back_to_list") }}</a>
+  </div>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>{{ t("audit.detail.request_info") }}</h2>
+    <span class="badge badge-{{ row.status }}">{{ status_labels.get(row.status, row.status) }}</span>
+  </div>
+  <dl class="detail-grid">
+    <dt>Request ID</dt><dd class="mono">{{ row.request_id }}</dd>
+    <dt>{{ t("audit.detail.event_type") }}</dt><dd>{{ event_labels.get(row.event_type, row.event_type) }}</dd>
+    <dt>{{ t("common.user") }}</dt><dd>{{ row.user_name }}</dd>
+    <dt>{{ t("audit.actor_title") }}</dt>
+    <dd>
+      {% if row.actor_id %}
+        {{ row.actor_name or '—' }}
+        <span class="mono muted">{{ row.actor_provider }}:{{ row.actor_id }}</span>
+        <span class="badge badge-readonly">{{ t("audit.trust.asserted") }}</span>
+      {% else %}—{% endif %}
+    </dd>
+    <dt>{{ t("audit.detail.token_prefix") }}</dt><dd class="mono">{{ row.token_prefix or '—' }}</dd>
+    <dt>{{ t("audit.table.credential") }}</dt><dd class="mono">{{ row.credential_account or '—' }}</dd>
+    <dt>{{ t("common.datasource") }}</dt><dd>{{ row.datasource_name or '—' }}{% if row.datasource_id %}{{ t("audit.detail.datasource_id", id=row.datasource_id) }}{% endif %}</dd>
+    <dt>{{ t("common.database") }}</dt><dd class="mono">{{ row.database_name or '—' }}</dd>
+    <dt>{{ t("common.tool") }}</dt><dd>{{ row.tool or '—' }}</dd>
+    <dt>{{ t("audit.detail.client_ip") }}</dt><dd class="mono">{{ row.client_ip or '—' }}</dd>
+    <dt>{{ t("audit.detail.started") }}</dt><dd class="mono">{{ row.created_at|dt }}</dd>
+    <dt>{{ t("audit.detail.finished") }}</dt><dd class="mono">{{ row.finished_at|dt or '—' }}</dd>
+    <dt>{{ t("common.duration") }}</dt><dd class="mono">{% if row.duration_ms is not none %}{{ row.duration_ms }} ms{% else %}—{% endif %}</dd>
+    <dt>{{ t("audit.detail.rows") }}</dt><dd class="mono">{{ row.row_count if row.row_count is not none else '—' }}</dd>
+    <dt>{{ t("audit.table.deny") }}</dt><dd class="mono">{{ row.deny_reason or '—' }}</dd>
+  </dl>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>SQL</h2></div>
+  {% if row.sql_text %}
+  <pre class="sql">{{ row.sql_text }}</pre>
+  {% else %}
+  <p class="empty">{{ t("audit.detail.no_sql") }}</p>
+  {% endif %}
+</section>
+
+{% if row.error_message %}
+<section class="card">
+  <div class="card-head"><h2>{{ t("audit.detail.error") }}</h2></div>
+  <pre class="sql error-text">{{ row.error_message }}</pre>
+</section>
+{% endif %}
+{% endblock %}

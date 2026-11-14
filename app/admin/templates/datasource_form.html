@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.datasource_new") if mode == 'new' else t("page.datasource_edit") }}</h1>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/admin/datasources">{{ t("common.back_to_list") }}</a>
+  </div>
+</div>
+
+<section class="card narrow">
+  <form method="post"
+        action="{% if mode == 'new' %}/admin/datasources/new{% else %}/admin/datasources/{{ datasource.id }}/edit{% endif %}"
+        class="stack"
+        data-db-form>
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    {% if narrowing %}
+    <div class="alert alert-error">
+      <p class="strong">{{ t("datasource.narrowing_title") }}</p>
+      <ul>
+        <li>{{ t("datasource.narrowing_removed", names=narrowing.removed|join(t("common.list_separator"))) }}</li>
+        <li>{{ t("datasource.narrowing_tokens", n=narrowing.tokens) }}</li>
+        <li>{{ t("datasource.narrowing_credentials", n=narrowing.credentials) }}</li>
+        <li>{{ t("datasource.narrowing_databases", n=narrowing.databases) }}</li>
+      </ul>
+      <label class="check"><input type="checkbox" name="confirm" value="1" required> {{ t("datasource.narrowing_confirm") }}</label>
+    </div>
+    {% endif %}
+    <div class="form-grid">
+      <label class="field">
+        <span>{{ t("field.name") }}</span>
+        <input type="text" name="name" value="{{ values.name or '' }}" maxlength="64" required>
+      </label>
+      <label class="field">
+        <span>{{ t("field.host") }}</span>
+        <input type="text" name="host" value="{{ values.host or '' }}" maxlength="255" required>
+      </label>
+      <label class="field">
+        <span>{{ t("field.port") }}</span>
+        <input type="number" name="port" value="{{ values.port or 3306 }}" min="1" max="65535" required>
+      </label>
+      <label class="field">
+        <span>{{ t("field.username") }}</span>
+        <input type="text" name="username" value="{{ values.username or '' }}" maxlength="128" required>
+      </label>
+      <label class="field">
+        <span>{{ t("field.password") }}{% if mode == 'edit' %}<em class="hint">{{ t("datasource.password_keep_hint") }}</em>{% endif %}</span>
+        <input type="password" name="password" autocomplete="new-password" {% if mode == 'new' %}required{% endif %}>
+      </label>
+    </div>
+
+    <section class="db-picker"
+             data-db-picker
+             data-mode="{{ mode }}"
+             data-refresh-url="{% if mode == 'new' %}/admin/datasources/new/databases/refresh{% else %}/admin/datasources/{{ datasource.id }}/databases/refresh{% endif %}"
+             data-csrf="{{ session.csrf }}">
+      <div class="db-picker-head">
+        <h3>{{ t("datasource.databases_title") }}</h3>
+        <p class="muted">{{ t("datasource.databases_hint") }}</p>
+      </div>
+      <div class="db-tools">
+        <button type="button" class="btn btn-small btn-secondary" data-db-refresh>{{ t("datasource.read_databases") }}</button>
+        <input type="search" class="db-filter" data-db-filter placeholder="{{ t('datasource.filter_databases') }}" autocomplete="off">
+        <button type="button" class="btn btn-small btn-secondary" data-db-all>{{ t("common.select_all") }}</button>
+        <button type="button" class="btn btn-small btn-secondary" data-db-clear>{{ t("common.clear") }}</button>
+        <span class="db-status muted" data-db-status></span>
+      </div>
+      <div class="db-options" data-db-options>
+        {% for name in values.databases or [] %}
+        <label class="db-option">
+          <input type="checkbox" name="databases" value="{{ name }}" checked>
+          <span class="mono">{{ name }}</span>
+        </label>
+        {% else %}
+        <p class="empty" data-db-empty>
+          {{ t("datasource.empty_new") if mode == 'new' else t("datasource.empty_edit") }}
+        </p>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="db_picker" value="1">
+      {% if mode == 'new' %}
+      <p class="muted">{{ t("datasource.read_hint_new") }}</p>
+      {% else %}
+      <p class="muted">{{ t("datasource.read_hint_edit") }}</p>
+      {% endif %}
+    </section>
+
+    <div class="form-grid">
+      <label class="field">
+        <span>{{ t("field.default_database") }}</span>
+        <select name="default_database" data-db-default required>
+          {% for name in values.databases or [] %}
+          <option value="{{ name }}" {% if name == values.default_database %}selected{% endif %}>{{ name }}</option>
+          {% else %}
+          <option value="{{ values.default_database or '' }}">{{ values.default_database or t("datasource.default_database_placeholder") }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label class="field">
+      <span>{{ t("field.remark") }}<em class="hint">{{ t("datasource.remark_hint") }}</em></span>
+      <input type="text" name="remark" value="{{ values.remark or '' }}" maxlength="255">
+    </label>
+    <p class="muted">{{ t("datasource.save_hint") }}</p>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{{ t("common.save") }}</button>
+      <a class="btn btn-secondary" href="/admin/datasources">{{ t("common.cancel") }}</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/admin/static/datasource_databases.js"></script>
+{% endblock %}

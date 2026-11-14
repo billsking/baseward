@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <h1 class="auth-title">
+      <img class="auth-logo" src="/admin/static/baseward-logo.png" alt="{{ t('app.title') }}" width="1316" height="414">
+    </h1>
+    <p class="muted">{{ t("login.hint") }}</p>
+    <form method="post" action="/admin/login" class="stack">
+      <label class="field">
+        <span>{{ t("login.username") }}</span>
+        <input type="text" name="username" autocomplete="username" maxlength="64" required autofocus>
+      </label>
+      <label class="field">
+        <span>{{ t("login.password") }}</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">{{ t("login.submit") }}</button>
+    </form>
+    <div class="lang-switch auth-lang-switch" aria-label="{{ t('nav.language') }}">
+      <a href="{{ language_url(request, 'zh-CN') }}" class="{% if locale == 'zh-CN' %}active{% endif %}" hreflang="zh-CN">中文</a>
+      <a href="{{ language_url(request, 'en') }}" class="{% if locale == 'en' %}active{% endif %}" hreflang="en">EN</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

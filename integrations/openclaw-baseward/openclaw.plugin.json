@@ -1,0 +1,51 @@
+{
+  "id": "baseward-bridge",
+  "name": "BaseWard Bridge",
+  "version": "0.0.1",
+  "description": "Bind a BaseWard MCP server to the trusted message requester using short-lived credentials",
+  "main": "src/index.ts",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["gatewayUrl", "exchangeToken"],
+    "properties": {
+      "gatewayUrl": {
+        "type": "string",
+        "description": "BaseWard origin, e.g. http://127.0.0.1:8080"
+      },
+      "exchangeToken": {
+        "type": "string",
+        "description": "gw_ token of kind exchange; it cannot query data itself"
+      },
+      "serverName": {
+        "type": "string",
+        "default": "baseward",
+        "description": "MCP server name declared in mcp.servers"
+      },
+      "mcpPath": {
+        "type": "string",
+        "default": "/mcp/",
+        "description": "MCP mount path on the gateway"
+      },
+      "channel": {
+        "type": "string",
+        "default": "dingtalk-connector",
+        "description": "Only resolve for this message channel"
+      },
+      "provider": {
+        "type": "string",
+        "default": "dingtalk",
+        "description": "X-BaseWard-Actor-Provider value"
+      },
+      "ttlMinutes": {
+        "type": "number",
+        "description": "Optional requested lifetime; the gateway caps it"
+      },
+      "refreshSkewSeconds": {
+        "type": "number",
+        "default": 60,
+        "description": "Re-exchange this many seconds before expiry"
+      }
+    }
+  }
+}

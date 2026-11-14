@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.dashboard") }}</h1>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/admin/datasources/new">{{ t("dashboard.new_datasource") }}</a>
+    <a class="btn btn-secondary" href="/admin/tokens">{{ t("dashboard.manage_tokens") }}</a>
+  </div>
+</div>
+
+<section class="cards">
+  <div class="card stat">
+    <div class="stat-label">{{ t("dashboard.stat_datasources") }}</div>
+    <div class="stat-value">{{ ds_total }}</div>
+    <div class="stat-note">{{ t("dashboard.stat_datasources_note", n=ds_enabled) }}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">{{ t("dashboard.stat_tokens") }}</div>
+    <div class="stat-value">{{ token_enabled }}</div>
+    <div class="stat-note">{{ t("dashboard.stat_tokens_note") }}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">{{ t("dashboard.stat_today_calls") }}</div>
+    <div class="stat-value">{{ today_total }}</div>
+    <div class="stat-note">{{ t("dashboard.stat_today_note") }}</div>
+  </div>
+  <div class="card stat">
+    <div class="stat-label">{{ t("dashboard.stat_denied") }}</div>
+    <div class="stat-value">{{ today_denied }}</div>
+    <div class="stat-note">{{ t("dashboard.stat_denied_note") }}</div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>{{ t("dashboard.recent_audit") }}</h2>
+    <a class="link" href="/admin/audit">{{ t("dashboard.view_all") }}</a>
+  </div>
+  {% if recent %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>{{ t("common.time") }}</th><th>{{ t("common.user") }}</th><th>{{ t("common.datasource") }}</th><th>{{ t("common.tool") }}</th><th>{{ t("common.status") }}</th><th>{{ t("common.duration") }}</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in recent %}
+        <tr>
+          <td class="mono">{{ row.created_at|dt }}</td>
+          <td>{{ row.user_name }}</td>
+          <td>{{ row.datasource_name or '—' }}</td>
+          <td>{{ row.tool or '—' }}</td>
+          <td><span class="badge badge-{{ row.status }}">{{ status_labels.get(row.status, row.status) }}</span></td>
+          <td class="mono">{% if row.duration_ms is not none %}{{ row.duration_ms }} ms{% else %}—{% endif %}</td>
+          <td><a class="link" href="/admin/audit/{{ row.request_id }}">{{ t("common.details") }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">{{ t("dashboard.empty") }}</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.audit") }}</h1>
+  <span class="muted">{{ t("common.total", n=total) }}</span>
+</div>
+
+<section class="card">
+  <form method="get" action="/admin/audit" class="filter-grid">
+    <label class="field">
+      <span>{{ t("audit.from") }}</span>
+      <input type="datetime-local" name="from" value="{{ raw['from'] }}">
+    </label>
+    <label class="field">
+      <span>{{ t("audit.to") }}</span>
+      <input type="datetime-local" name="to" value="{{ raw['to'] }}">
+    </label>
+    <label class="field">
+      <span>{{ t("common.user") }}</span>
+      <input type="text" name="user_name" value="{{ raw['user_name'] }}" maxlength="64">
+    </label>
+    <label class="field">
+      <span>{{ t("column.actor") }}</span>
+      <input type="text" name="actor" value="{{ raw['actor'] }}" maxlength="128">
+    </label>
+    <label class="field">
+      <span>{{ t("common.datasource") }}</span>
+      <input type="text" name="datasource_name" value="{{ raw['datasource_name'] }}" maxlength="64">
+    </label>
+    <label class="field">
+      <span>{{ t("common.status") }}</span>
+      <select name="status">
+        <option value="">{{ t("common.all") }}</option>
+        {% for value, label in status_labels.items() %}
+        <option value="{{ value }}" {% if raw['status'] == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>{{ t("audit.keyword") }}</span>
+      <input type="text" name="q" value="{{ raw['q'] }}" maxlength="128" placeholder="{{ t('audit.keyword_placeholder') }}">
+    </label>
+    <div class="form-actions align-end">
+      <button type="submit" class="btn btn-primary">{{ t("audit.filter") }}</button>
+      <a class="btn btn-secondary" href="/admin/audit">{{ t("audit.reset") }}</a>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>{{ t("common.time") }}</th><th>{{ t("audit.table.event") }}</th><th>{{ t("common.user") }}</th><th>{{ t("column.actor") }}</th><th>{{ t("audit.table.credential") }}</th><th>{{ t("common.datasource") }}</th><th>{{ t("common.database") }}</th><th>{{ t("common.tool") }}</th><th>{{ t("common.status") }}</th><th>{{ t("audit.table.deny") }}</th><th>{{ t("common.duration") }}</th><th>{{ t("audit.table.rows") }}</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="mono">{{ row.created_at|dt }}</td>
+          <td>{{ event_labels.get(row.event_type, row.event_type) }}</td>
+          <td>{{ row.user_name }}</td>
+          <td>{{ row.actor_name or row.actor_id or '—' }}</td>
+          <td class="mono small">{{ row.credential_account or '—' }}</td>
+          <td>{{ row.datasource_name or '—' }}</td>
+          <td class="mono small">{{ row.database_name or '—' }}</td>
+          <td>{{ row.tool or '—' }}</td>
+          <td><span class="badge badge-{{ row.status }}">{{ status_labels.get(row.status, row.status) }}</span></td>
+          <td class="mono small">{{ row.deny_reason or '—' }}</td>
+          <td class="mono">{% if row.duration_ms is not none %}{{ row.duration_ms }} ms{% else %}—{% endif %}</td>
+          <td class="mono">{{ row.row_count if row.row_count is not none else '—' }}</td>
+          <td><a class="link" href="/admin/audit/{{ row.request_id }}">{{ t("common.details") }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="pagination">
+    <span class="muted">{{ t("common.page_of", page=page, pages=pages) }}</span>
+    <div class="actions">
+      {% if prev_url %}<a class="btn btn-small btn-secondary" href="{{ prev_url }}">{{ t("common.prev") }}</a>{% endif %}
+      {% if next_url %}<a class="btn btn-small btn-secondary" href="{{ next_url }}">{{ t("common.next") }}</a>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="empty">{{ t("audit.empty") }}</p>
+  {% endif %}
+</section>
+{% endblock %}

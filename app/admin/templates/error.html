@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="error-wrap">
+  <div class="card error-card">
+    <div class="error-code">{{ status_code }}</div>
+    <h1>{{ title }}</h1>
+    <p class="muted">{{ message }}</p>
+    <div class="form-actions">
+      {% if session %}
+      <a class="btn btn-primary" href="/admin">{{ t("error.back_dashboard") }}</a>
+      {% else %}
+      <a class="btn btn-primary" href="/admin/login">{{ t("error.go_login") }}</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

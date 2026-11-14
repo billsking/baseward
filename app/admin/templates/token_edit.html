@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.token_edit") }}</h1>
+  <div class="page-actions">
+    <a class="btn btn-secondary" href="/admin/tokens">{{ t("common.back_to_list") }}</a>
+  </div>
+</div>
+
+<section class="card">
+  <div class="token-meta">
+    <span class="strong">{{ token.user_name }}</span>
+    <span class="mono muted">{{ token.token_prefix }}…</span>
+    {% if token.token_kind == 'exchange' %}<span class="badge badge-readonly">{{ t("form.token_kind.exchange") }}</span>{% else %}<span class="badge badge-disabled">{{ t("form.token_kind.access") }}</span>{% endif %}
+    {% if token.enabled %}<span class="badge badge-success">{{ t("common.enabled") }}</span>{% else %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
+  </div>
+  <p class="muted">{{ t("token.scope_no_rotate") }}</p>
+  <form method="post" action="/admin/tokens/{{ token.id }}/scope" class="stack" data-scope-form>
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    {% set scope_default_mode = 'all' %}
+    {% include "_scope_picker.html" %}
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">{{ t("token.save_scope") }}</button>
+      <a class="btn btn-secondary" href="/admin/tokens">{{ t("common.cancel") }}</a>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>{{ t("form.actor_policy") }}</h2></div>
+  <p class="muted">{{ t("token.actor_policy_hint") }}</p>
+  <form method="post" action="/admin/tokens/{{ token.id }}/policy" class="stack">
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    <div class="form-row">
+      <label class="field grow">
+        <span>{{ t("form.actor_policy") }}</span>
+        <select name="actor_policy">
+          <option value="ignore" {% if token.actor_policy != 'require' %}selected{% endif %}>{{ t("form.actor_policy.ignore") }}</option>
+          <option value="require" {% if token.actor_policy == 'require' %}selected{% endif %}>{{ t("form.actor_policy.require") }}</option>
+        </select>
+      </label>
+      <div class="form-actions align-end">
+        <button type="submit" class="btn btn-primary">{{ t("common.save") }}</button>
+      </div>
+    </div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/admin/static/token_scope.js"></script>
+{% endblock %}

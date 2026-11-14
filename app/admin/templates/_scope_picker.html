@@ -1,0 +1,72 @@
+<div class="scope-picker" data-scope-picker data-initial="{{ scope_json or '' }}" data-default-mode="{{ scope_default_mode or 'all' }}" data-csrf="{{ session.csrf }}"{% if token %} data-token-id="{{ token.id }}"{% endif %}>
+  <div class="scope-picker-head">
+    <div>
+      <h3>{{ t("scope.title") }}</h3>
+      <p class="muted">{{ t("scope.hint") }}</p>
+    </div>
+    <div class="scope-tools">
+      <button type="button" class="btn btn-small btn-secondary" data-scope-copy>{{ t("scope.copy") }}</button>
+      <button type="button" class="btn btn-small btn-secondary" data-scope-template>{{ t("scope.template") }}</button>
+      <button type="button" class="btn btn-small btn-secondary" data-scope-preview>{{ t("scope.preview") }}</button>
+      <button type="button" class="btn btn-small btn-danger" data-scope-reset>{{ t("scope.reset") }}</button>
+    </div>
+  </div>
+
+  <div class="scope-mode" role="radiogroup" aria-label="{{ t('scope.datasource_scope') }}">
+    <label class="scope-mode-option">
+      <input type="radio" name="scope_ds_mode" value="all">
+      <span>{{ t("scope.all_datasources") }}</span>
+      <small>{{ t("scope.all_datasources_hint") }}</small>
+    </label>
+    <label class="scope-mode-option">
+      <input type="radio" name="scope_ds_mode" value="specified">
+      <span>{{ t("scope.specified_datasources") }}</span>
+      <small>{{ t("scope.specified_datasources_hint") }}</small>
+    </label>
+  </div>
+
+  <div class="scope-summary" aria-live="polite">
+    <div class="scope-summary-main" data-scope-summary-text>{{ t("scope.loading") }}</div>
+    <div class="scope-summary-counts" data-scope-counts></div>
+    <div class="scope-summary-warning" data-scope-warning hidden></div>
+  </div>
+
+  <div class="scope-all-note" data-scope-all-note hidden>
+    {{ t("scope.all_note") }}
+    <button type="button" class="btn btn-small btn-secondary" data-scope-to-specified>{{ t("scope.switch_to_specified") }}</button>
+  </div>
+
+  <div class="scope-bulk scope-ds-bulk" data-ds-bulk hidden>
+    <span class="scope-bulk-label">{{ t("scope.bulk_label") }}</span>
+    <button type="button" class="btn btn-small btn-secondary" data-ds-select-all>{{ t("scope.select_all_datasources") }}</button>
+    <button type="button" class="btn btn-small btn-secondary" data-ds-invert>{{ t("scope.invert_datasources") }}</button>
+    <button type="button" class="btn btn-small btn-secondary" data-ds-clear>{{ t("scope.clear_datasources") }}</button>
+  </div>
+
+  <div class="scope-ds-list" data-ds-list>
+    {% for ds in datasources or [] %}
+    <div class="scope-ds" data-ds-id="{{ ds.id }}" data-ds-name="{{ ds.name }}" data-default-database="{{ ds.default_database }}" data-enabled="{{ '1' if ds.enabled else '0' }}">
+      <div class="scope-ds-row">
+        <label class="scope-check scope-ds-label">
+          <input type="checkbox" class="scope-ds-checkbox" data-ds="{{ ds.id }}">
+          <span class="scope-ds-name">{{ ds.name }}</span>
+        </label>
+        <span class="scope-ds-meta">{{ ds.host }}:{{ ds.port }} · {{ ds.default_database }}</span>
+        {% if not ds.enabled %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
+        <span class="scope-ds-mode" data-ds-mode></span>
+        <div class="scope-ds-actions">
+          <button type="button" class="btn btn-small btn-secondary" data-ds-all>{{ t("scope.all_tables") }}</button>
+          <button type="button" class="btn btn-small btn-secondary" data-ds-pick>{{ t("scope.pick_tables") }}</button>
+          <button type="button" class="btn btn-small btn-secondary" data-ds-import>{{ t("scope.import_list") }}</button>
+        </div>
+      </div>
+      <div class="scope-ds-note" data-ds-note></div>
+    </div>
+    {% else %}
+    <p class="empty">{{ t("scope.empty_datasources") }}</p>
+    {% endfor %}
+  </div>
+
+  <div class="scope-footnote" data-scope-limits></div>
+  <input type="hidden" name="scope_payload" value="{{ scope_json or '' }}">
+</div>

@@ -1,0 +1,53 @@
+# Dependencies and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+!.env.test.example
+*.key
+*.pem
+
+# Runtime artifacts
+logs/
+*.log
+# Default SQLite management database (and its WAL side files)
+data/
+*.db
+*.db-wal
+*.db-shm
+docs/perf-report.md.tmp
+e2e/evidence/
+docs/req/*/test/evidence/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project state (local workflow state, not committed by default)
+.project-state.json
+
+# Internal process documents (kept locally, never published)
+docs/implementation-plan.md
+docs/requirement-final.md
+spec/
+
+# Editor/tool local state, not committed
+.codegraph/
+
+# Qoder session output (local reports/canvases, not committed)
+.qoder-credits/

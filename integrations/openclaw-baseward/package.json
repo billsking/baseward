@@ -1,0 +1,53 @@
+{
+  "name": "baseward-openclaw-bridge",
+  "version": "0.0.1",
+  "description": "OpenClaw plugin: bind a BaseWard MCP server to the trusted DingTalk requester via short-lived credential exchange",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "The BaseWard Authors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/billsking/baseward.git",
+    "directory": "integrations/openclaw-baseward"
+  },
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/",
+    "openclaw.plugin.json",
+    "README.md",
+    "README.zh-CN.md",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "openclaw": {
+    "compat": {
+      "pluginApi": ">=2026.8.1"
+    },
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "installDependencies": false
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.8.1"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

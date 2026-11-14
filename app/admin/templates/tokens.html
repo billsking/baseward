@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.tokens") }}</h1>
+</div>
+
+{% if new_token %}
+<section class="card token-box">
+  <h2>{{ t("token.new_created") }}</h2>
+  <p class="muted">{{ t("token.plaintext_warning") }}</p>
+  <div class="token-value">
+    <code id="new-token">{{ new_token }}</code>
+    <button type="button" class="btn btn-secondary btn-small" data-copy-target="new-token">{{ t("common.copy") }}</button>
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-head">
+    <h2>{{ t("token.create_title") }}</h2>
+  </div>
+  <form method="post" action="/admin/tokens/new" class="stack" data-scope-form>
+    <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+    <div class="form-row">
+      <label class="field grow">
+        <span>{{ t("token.username") }}</span>
+        <input type="text" name="user_name" value="{{ values.user_name if values else '' }}" maxlength="64" required>
+      </label>
+      <label class="field">
+        <span>{{ t("form.token_kind") }}</span>
+        <select name="token_kind">
+          <option value="access" {% if not values or values.token_kind != 'exchange' %}selected{% endif %}>{{ t("form.token_kind.access") }}</option>
+          <option value="exchange" {% if values and values.token_kind == 'exchange' %}selected{% endif %}>{{ t("form.token_kind.exchange") }}</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>{{ t("form.actor_policy") }}</span>
+        <select name="actor_policy">
+          <option value="ignore" {% if not values or values.actor_policy != 'require' %}selected{% endif %}>{{ t("form.actor_policy.ignore") }}</option>
+          <option value="require" {% if values and values.actor_policy == 'require' %}selected{% endif %}>{{ t("form.actor_policy.require") }}</option>
+        </select>
+      </label>
+      <div class="form-actions align-end">
+        <button type="submit" class="btn btn-primary">{{ t("common.create") }}</button>
+      </div>
+    </div>
+    {% set scope_default_mode = 'specified' %}
+    {% include "_scope_picker.html" %}
+    <p class="muted">{{ t("token.one_enabled_hint") }}</p>
+    <p class="muted">{{ t("token.exchange_hint") }}</p>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>{{ t("token.list_title") }}</h2>
+  </div>
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>{{ t("common.user") }}</th><th>{{ t("token.table.prefix") }}</th><th>{{ t("form.token_kind") }}</th><th>{{ t("token.table.scope") }}</th><th>{{ t("column.actor_policy") }}</th><th>{{ t("common.status") }}</th><th>{{ t("token.table.created") }}</th><th>{{ t("token.table.disabled") }}</th><th class="right">{{ t("common.actions") }}</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% set info = (scope_info or {}).get(row.id) %}
+        <tr>
+          <td class="strong">{{ row.user_name }}</td>
+          <td class="mono">{{ row.token_prefix }}…</td>
+          <td>
+            {% if row.token_kind == 'exchange' %}<span class="badge badge-readonly">{{ t("form.token_kind.exchange") }}</span>{% else %}<span class="badge badge-disabled">{{ t("form.token_kind.access") }}</span>{% endif %}
+          </td>
+          <td>
+            {% if info and info.broken %}
+            <span class="badge badge-error">{{ info.summary }}</span>
+            {% elif info and info.restricted %}
+            <span class="badge badge-readonly" title="{{ t('token.scope_tooltip') }}">{{ info.summary }}</span>
+            {% else %}
+            <span class="badge badge-disabled">{{ t("common.all") }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if row.actor_policy == 'require' %}<span class="badge badge-readonly">{{ t("form.actor_policy.require") }}</span>{% else %}<span class="badge badge-disabled">{{ t("form.actor_policy.ignore") }}</span>{% endif %}
+          </td>
+          <td>
+            {% if row.enabled %}<span class="badge badge-success">{{ t("common.enabled") }}</span>{% else %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
+          </td>
+          <td class="mono">{{ row.created_at|dt }}</td>
+          <td class="mono">{{ row.disabled_at|dt or '—' }}</td>
+          <td class="right actions">
+            <a class="btn btn-small btn-secondary" href="/admin/tokens/{{ row.id }}/edit">{{ t("token.grant") }}</a>
+            {% if row.enabled %}
+            <form method="post" action="/admin/tokens/{{ row.id }}/disable" class="inline-form" data-confirm="{{ t('token.confirm_disable') }}">
+              <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+              <button type="submit" class="btn btn-small btn-secondary">{{ t("common.disabled") }}</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/admin/tokens/{{ row.id }}/delete" class="inline-form" data-confirm="{{ t('token.confirm_delete') }}">
+              <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+              <button type="submit" class="btn btn-small btn-danger">{{ t("common.delete") }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">{{ t("token.empty") }}</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="/admin/static/token_scope.js"></script>
+{% endblock %}

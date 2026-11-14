@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page_title %}{{ page_title }} · {% endif %}{{ t("app.title") }}</title>
+  <link rel="icon" type="image/x-icon" href="/admin/static/favicon.ico">
+  <link rel="stylesheet" href="/admin/static/app.css">
+</head>
+<body>
+{% if session %}
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/admin" aria-label="{{ t('app.title') }}">
+      <img class="brand-logo" src="/admin/static/baseward-logo-reverse.png" alt="{{ t('app.title') }}" width="114" height="36">
+    </a>
+    <nav class="nav">
+      <a href="/admin" class="{% if request.url.path == '/admin' or request.url.path == '/admin/' %}active{% endif %}">{{ t("nav.dashboard") }}</a>
+      <a href="/admin/datasources" class="{% if request.url.path.startswith('/admin/datasources') %}active{% endif %}">{{ t("nav.datasources") }}</a>
+      <a href="/admin/tokens" class="{% if request.url.path.startswith('/admin/tokens') %}active{% endif %}">{{ t("nav.tokens") }}</a>
+      <a href="/admin/credentials" class="{% if request.url.path.startswith('/admin/credentials') %}active{% endif %}">{{ t("nav.credentials") }}</a>
+      <a href="/admin/short-credentials" class="{% if request.url.path.startswith('/admin/short-credentials') %}active{% endif %}">{{ t("nav.short_credentials") }}</a>
+      <a href="/admin/audit" class="{% if request.url.path.startswith('/admin/audit') %}active{% endif %}">{{ t("nav.audit") }}</a>
+      <a href="/admin/settings" class="{% if request.url.path.startswith('/admin/settings') %}active{% endif %}">{{ t("nav.settings") }}</a>
+    </nav>
+    <div class="account">
+      <span class="lang-switch" aria-label="{{ t('nav.language') }}">
+        <a href="{{ language_url(request, 'zh-CN') }}" class="{% if locale == 'zh-CN' %}active{% endif %}" hreflang="zh-CN">中文</a>
+        <a href="{{ language_url(request, 'en') }}" class="{% if locale == 'en' %}active{% endif %}" hreflang="en">EN</a>
+      </span>
+      <span class="account-name">{{ session.username }}</span>
+      <form method="post" action="/admin/logout" class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+        <button type="submit" class="btn btn-ghost btn-small">{{ t("nav.logout") }}</button>
+      </form>
+    </div>
+  </div>
+</header>
+{% endif %}
+<main class="container">
+  {% if msg %}
+  <div class="alert alert-success">{{ msg }}{% if msg_extra %}{{ t("common.parenthesized", text=msg_extra) }}{% endif %}</div>
+  {% endif %}
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer">{{ t("footer.text") }}</footer>
+<script>window.ADMIN_I18N = {{ js_messages | tojson }};</script>
+<script src="/admin/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

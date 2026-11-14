@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ t("page.datasources") }}</h1>
+  <div class="page-actions">
+    <a class="btn btn-primary" href="/admin/datasources/new">{{ t("datasource.new") }}</a>
+  </div>
+</div>
+
+<section class="card">
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>{{ t("datasource.table.name") }}</th><th>{{ t("datasource.table.address") }}</th><th>{{ t("datasource.table.databases") }}</th><th>{{ t("datasource.table.access") }}</th><th>{{ t("common.status") }}</th><th>{{ t("datasource.table.remark") }}</th><th class="right">{{ t("common.actions") }}</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="strong">{{ row.name }}</td>
+          <td class="mono">{{ row.host }}:{{ row.port }}</td>
+          <td class="mono">
+            <div class="db-chips">
+              {% for policy in (policies or {}).get(row.id) or [] %}
+              <span class="db-chip{% if policy.name == row.default_database %} db-chip-default{% endif %}">
+                {{ policy.name }}
+                {% if policy.name == row.default_database %}<em class="db-flag db-flag-default">{{ t("datasource.flag_default") }}</em>{% endif %}
+                {% if policy.is_read_only %}<em class="db-flag">{{ t("datasource.flag_readonly") }}</em>{% else %}<em class="db-flag db-flag-writable">{{ t("datasource.flag_writable") }}</em>{% endif %}
+              </span>
+              {% else %}
+              <span class="muted">—</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            {% set summary = (db_summaries or {}).get(row.id) or t("datasource.summary_all_readonly") %}
+            {% if (db_writable or {}).get(row.id) %}
+            <span class="badge badge-writable">{{ summary }}</span>
+            {% else %}
+            <span class="badge badge-readonly">{{ summary }}</span>
+            {% endif %}
+            {% if row.is_read_only %}<span class="badge badge-readonly">{{ t("datasource.master_readonly") }}</span>{% endif %}
+          </td>
+          <td>
+            {% if row.enabled %}<span class="badge badge-success">{{ t("common.enabled") }}</span>{% else %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
+          </td>
+          <td class="muted">{{ row.remark or '—' }}</td>
+          <td class="right actions">
+            <a class="btn btn-small btn-secondary" href="/admin/datasources/{{ row.id }}/edit">{{ t("datasource.edit") }}</a>
+            <a class="btn btn-small btn-secondary" href="/admin/datasources/{{ row.id }}/policy">{{ t("datasource.policy") }}</a>
+            <form method="post" action="/admin/datasources/{{ row.id }}/test" class="inline-form">
+              <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+              <button type="submit" class="btn btn-small btn-secondary">{{ t("datasource.test") }}</button>
+            </form>
+            <form method="post" action="/admin/datasources/{{ row.id }}/delete" class="inline-form" data-confirm="{{ t('datasource.confirm_delete', name=row.name) }}">
+              <input type="hidden" name="_csrf" value="{{ session.csrf }}">
+              <button type="submit" class="btn btn-small btn-danger">{{ t("common.delete") }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">{{ t("datasource.empty") }}</p>
+  {% endif %}
+</section>
+{% endblock %}
