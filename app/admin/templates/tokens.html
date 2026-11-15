@@ -22,7 +22,7 @@
   <form method="post" action="/admin/tokens/new" class="stack" data-scope-form>
     <input type="hidden" name="_csrf" value="{{ session.csrf }}">
     <div class="form-row">
-      <label class="field grow">
+      <label class="field field-username">
         <span>{{ t("token.username") }}</span>
         <input type="text" name="user_name" value="{{ values.user_name if values else '' }}" maxlength="64" required>
       </label>

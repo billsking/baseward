@@ -360,7 +360,8 @@ async def datasource_new_databases_refresh(request: Request) -> Response:
     password = str(form.get("password") or "")
     port = _int_field(form, "port")
     default_database = str(form.get("default_database") or "").strip()
-    if not host or not username or not password or not default_database or not 1 <= port <= 65535:
+    # The default database is picked from the list this endpoint returns, so it is still empty on the first read.
+    if not host or not username or not password or not 1 <= port <= 65535:
         return _metadata_error("INVALID_ARGUMENT", "请先填写完整的连接参数（含密码）", 400)
     try:
         names = await _services(request).datasources.refresh_upstream_databases(

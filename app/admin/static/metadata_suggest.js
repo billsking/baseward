@@ -33,7 +33,7 @@
     if (!input || !menu || !datasourceId) {
       return;
     }
-    var dbInput = form.querySelector('input[name="database"]');
+    var dbInput = form.querySelector('[name="database"]');
     var tableInput = form.querySelector('input[name="table"]');
     var columnInput = form.querySelector('input[name="column"]');
 

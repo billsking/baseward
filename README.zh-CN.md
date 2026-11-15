@@ -10,6 +10,8 @@
 
 BaseWard 是面向 AI 客户端的 MCP 数据库网关。它挡在你的 Agent 和任意 MySQL 协议族数据库之间——MySQL、MariaDB、Percona、Amazon Aurora，以及 TiDB、OceanBase、PolarDB 这些 MySQL 兼容引擎（含国产分布式数据库）——决定 Agent 能看什么、能做什么：按 Token 收敛到列级的授权、基于 SQL AST 的默认拒绝策略、列级脱敏、审计不可用即拒绝，以及给大结果集准备的短期 MySQL 凭证。
 
+面向聊天机器人还能再细一层：配套的 OpenClaw 桥插件给**每个钉钉用户单独发一张短期凭证**，一个机器人就能服务整个组织，而审计里留下的是真正提问的那个人。
+
 - MCP 端点：`POST /mcp`（Streamable HTTP，无状态）
 - 管理端：`/admin`
 - 健康检查：`/healthz`
@@ -126,6 +128,8 @@ GRANT CREATE, ALTER, INDEX, REFERENCES, SELECT, INSERT, UPDATE, DELETE ON db_gat
 | 脱敏 | 按列名自动识别 phone/email/身份证/姓名/地址/密码等；支持手动 `mask/hash/null/off` |
 | 审计 | 执行前写意图、结束更新状态；审计库不可用时拒绝执行 |
 | 导出凭证 | MySQL 协议只读代理，凭证绑定来源 IP；MCP 结果超限时自动交接 |
+| 按钉钉账号分发凭证 | OpenClaw 桥插件把宿主可信的发送者 ID 换发成短期凭证，绑定该行为人与来源 IP；换发令牌本身查不了数据 |
+| 双身份审计 | 机器人/代理平台的调用同时记录令牌属主与真实终端用户（`actor_provider` / `actor_id`），管理端可按行为人筛选 |
 | 管理端 | 数据源、策略、脱敏、Token 授权、审计检索、设置；中英双语（`?lang=`、Cookie 或 `Accept-Language`）；CSRF 校验与 HttpOnly 会话 |
 
 ## MCP 工具
@@ -139,6 +143,27 @@ GRANT CREATE, ALTER, INDEX, REFERENCES, SELECT, INSERT, UPDATE, DELETE ON db_gat
 | `issue_export_credential` | 用一条 SELECT 换短期 MySQL 只读凭证 |
 
 工具参数、授权口径与错误码见 [docs/mcp-tools.zh-CN.md](docs/mcp-tools.zh-CN.md)；导出协议见 [docs/export-credential.zh-CN.md](docs/export-credential.zh-CN.md)。
+
+## 一个机器人，每个钉钉用户一张凭证
+
+钉钉机器人是全群共用的，但它背后的查询不是——该出现在审计里的，是真正提问的那个人。仓库自带的 OpenClaw 桥插件（[integrations/openclaw-baseward](integrations/openclaw-baseward/README.zh-CN.md)）把宿主可信的发送者 ID 换成只属于该用户的凭证。
+
+```
+钉钉用户 → dingtalk-connector → OpenClaw 运行（SenderId = senderStaffId）
+      → POST /api/exchange（Bearer 换发令牌 + 行为人身份头）
+      → sc_<短期凭证> → 该请求者 MCP 连接的 Authorization
+```
+
+- **两类令牌。** 代理主机长期持有的只是 `exchange` 换发令牌，它查不了数据、也碰不到任何 MCP 工具（`403 exchange_only`），只能铸造凭证。每个终端用户拿到的是 `sc_` 短期凭证，绑定该行为人与调用方来源 IP，默认 15 分钟（上限 60）。
+- **模型全程看不到凭证。** resolver 读的是宿主可信的 `requesterSenderId`，不是模型输入，因此提示词注入无法改用别人的身份。
+- **失败即关闭。** 没有可信发送者的运行（定时任务、子代理、心跳）或来自其他渠道的运行，根本不会建立 BaseWard 连接；换发失败则该轮省略此服务。
+- **双身份审计。** 每次调用同时记录机器人运营方（`user_name`）与真实请求者（`actor_id` = 钉钉 `senderStaffId`），以及所用的 `sc_` 凭证。同一行为人最多一张有效凭证——重新换发即吊销上一张——管理端也可提前吊销。
+
+```bash
+openclaw plugins install ./integrations/openclaw-baseward --link
+```
+
+部署前先清楚边界：行为人身份仍是**自报**（尚无钉钉回调验签），授权走的是**换发令牌的授权范围**而非按用户差异化授权，且换发与使用必须来自**同一出口 IP**。协议、错误码与生命周期见 [docs/exchange-credential.zh-CN.md](docs/exchange-credential.zh-CN.md)；身份契约见 [docs/actor-identity.zh-CN.md](docs/actor-identity.zh-CN.md)；代码级证据见 [SECURITY.zh-CN.md](SECURITY.zh-CN.md)。
 
 ## 安全模型
 
@@ -168,6 +193,9 @@ GRANT CREATE, ALTER, INDEX, REFERENCES, SELECT, INSERT, UPDATE, DELETE ON db_gat
 - [docs/admin-ui.zh-CN.md](docs/admin-ui.zh-CN.md) — 管理端功能
 - [docs/mcp-tools.zh-CN.md](docs/mcp-tools.zh-CN.md) — MCP 工具与错误码
 - [docs/export-credential.zh-CN.md](docs/export-credential.zh-CN.md) — MySQL 导出协议
+- [docs/exchange-credential.zh-CN.md](docs/exchange-credential.zh-CN.md) — 短期凭证换发
+- [docs/actor-identity.zh-CN.md](docs/actor-identity.zh-CN.md) — 代理平台的终端用户身份契约
+- [integrations/openclaw-baseward/README.zh-CN.md](integrations/openclaw-baseward/README.zh-CN.md) — OpenClaw 桥插件（按钉钉账号分发凭证）
 - [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md) — 部署要求、验收清单、已知限制
 - [docs/compatibility.zh-CN.md](docs/compatibility.zh-CN.md) — 支持哪些引擎、哪些已实测
 - [docs/development.zh-CN.md](docs/development.zh-CN.md) — 本机开发与测试

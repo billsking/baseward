@@ -10,6 +10,8 @@
 
 BaseWard is an MCP-native database gateway for AI agents. It sits between your agents and any MySQL-family database — MySQL, MariaDB, Percona, Amazon Aurora, or a MySQL-compatible engine such as TiDB, OceanBase or PolarDB — and decides what they can see and do: per-token scopes down to the column, AST-based default-deny policy, column-level masking, fail-closed audit — and short-lived MySQL credentials for large exports.
 
+For chat bots it goes one level deeper: an OpenClaw bridge plugin hands **each DingTalk user their own short-lived credential**, so one bot can serve the whole organization while the audit still names the person who actually asked.
+
 - MCP endpoint: `POST /mcp` (Streamable HTTP, stateless)
 - Admin console: `/admin` (Chinese and English)
 - Health check: `/healthz`
@@ -145,6 +147,8 @@ Docker 20.10+ is required). `127.0.0.1` inside the container points at the conta
 | Masking | automatic keyword detection (phone, email, ID card, name, address, password) plus manual `mask/hash/null/off` rules |
 | Audit | intent is written before execution and updated afterwards; execution is blocked when the audit store is unavailable |
 | Export credentials | read-only MySQL-protocol proxy bound to the source IP; oversized MCP results hand off automatically |
+| Per-DingTalk-user credentials | OpenClaw bridge plugin exchanges the host-trusted sender id for a short-lived credential bound to that actor and source IP; the exchange token itself cannot query data |
+| Dual-identity audit | bot/agent calls record both the token owner and the real end user (`actor_provider` / `actor_id`), filterable in the admin console |
 | Admin console | datasources, policies, masking rules, token scopes, audit search, settings; Chinese/English UI chosen from `?lang=`, a cookie or `Accept-Language`; CSRF protection and HttpOnly sessions |
 
 ## MCP tools
@@ -158,6 +162,40 @@ Docker 20.10+ is required). `127.0.0.1` inside the container points at the conta
 | `issue_export_credential` | Exchange a `SELECT` for a short-lived MySQL credential |
 
 Tool schemas, authorization rules and error codes: [docs/mcp-tools.md](docs/mcp-tools.md). Export protocol: [docs/export-credential.md](docs/export-credential.md).
+
+## One bot, one credential per DingTalk user
+
+A DingTalk bot is shared by a whole group, but the queries behind it are not — the person who asked
+is the one who should appear in the audit. The bundled OpenClaw bridge plugin
+([integrations/openclaw-baseward](integrations/openclaw-baseward/README.md)) turns the host's trusted
+sender id into a credential for that user alone.
+
+```
+DingTalk user → dingtalk-connector → OpenClaw run (SenderId = senderStaffId)
+      → POST /api/exchange  (Bearer exchange token + actor headers)
+      → sc_<short credential>  → Authorization of that requester's MCP connection
+```
+
+- **Two token kinds.** The agent host holds only an `exchange` token, which cannot query data or
+  reach any MCP tool (`403 exchange_only`) — it can only mint credentials. Each end user gets an
+  `sc_` credential bound to that actor and the caller's source IP, 15 minutes by default (60 max).
+- **The model never sees a credential.** The resolver reads the host-trusted `requesterSenderId`,
+  not model input, so prompt injection cannot switch whose identity is used.
+- **Fail closed.** A run with no trusted sender (cron, subagent, heartbeat) or from another channel
+  gets no BaseWard connection at all; a failed exchange omits the server for that run.
+- **Dual-identity audit.** Every call records the bot operator (`user_name`) and the real requester
+  (`actor_id` = DingTalk `senderStaffId`), plus the `sc_` credential used. Each actor has at most one
+  active credential — re-exchanging revokes the previous one — and the admin console can revoke early.
+
+```bash
+openclaw plugins install ./integrations/openclaw-baseward --link
+```
+
+Know the boundaries before deploying: the actor is **self-asserted** (no DingTalk callback
+verification yet), authorization follows the **exchange token's scope** rather than per-user grants,
+and exchange and use must come from the **same egress IP**. Protocol, error codes and lifecycle:
+[docs/exchange-credential.md](docs/exchange-credential.md); identity contract:
+[docs/actor-identity.md](docs/actor-identity.md); code-level evidence: [SECURITY.md](SECURITY.md).
 
 ## Security model
 
@@ -190,6 +228,9 @@ Chinese-only.
 - [docs/admin-ui.md](docs/admin-ui.md) — admin console
 - [docs/mcp-tools.md](docs/mcp-tools.md) — tool schemas and error codes
 - [docs/export-credential.md](docs/export-credential.md) — MySQL export protocol
+- [docs/exchange-credential.md](docs/exchange-credential.md) — short-lived credential exchange
+- [docs/actor-identity.md](docs/actor-identity.md) — end-user identity contract for agent platforms
+- [integrations/openclaw-baseward/README.md](integrations/openclaw-baseward/README.md) — OpenClaw bridge plugin (per-DingTalk-user credentials)
 - [docs/deployment.md](docs/deployment.md) — deployment, acceptance checklist, limitations
 - [docs/compatibility.md](docs/compatibility.md) — engines in scope, and which ones are actually verified
 - [docs/development.md](docs/development.md) — local development and tests

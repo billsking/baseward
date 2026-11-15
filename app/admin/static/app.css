@@ -203,8 +203,9 @@ a:hover { text-decoration: underline; }
 .form-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .form-row { display: flex; gap: 14px; align-items: flex-start; }
 .grow { flex: 1; }
+.field-username { width: 320px; max-width: 100%; }
 .form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.align-end { align-items: flex-end; }
+.align-end { align-self: flex-end; }
 
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > span { font-size: 13px; color: #334155; font-weight: 500; }
@@ -680,6 +681,7 @@ pre.sql.error-text { background: #450a0a; color: #fecaca; }
 }
 .db-option { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .db-option[hidden] { display: none; }
+.db-options .empty { grid-column: 1 / -1; }
 .db-status { font-size: 12px; }
 .error-text { color: var(--danger); }
 .db-chips { display: flex; flex-wrap: wrap; gap: 4px; max-width: 320px; }
@@ -711,4 +713,5 @@ pre.sql.error-text { background: #450a0a; color: #fecaca; }
   .account { margin-left: auto; }
   .detail-grid { grid-template-columns: 1fr; }
   .form-row { flex-direction: column; }
+  .form-row > .align-end { align-self: flex-start; }
 }

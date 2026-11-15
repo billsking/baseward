@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from contextlib import asynccontextmanager
 
 import pytest
@@ -96,6 +97,25 @@ async def test_refresh_new_form_reads_upstream_databases(env):
     )
     assert unreachable.status_code == 502
     assert "库清单" in unreachable.text
+
+
+async def test_refresh_new_form_before_default_database_is_pickable(env):
+    """The new-form default database is a select fed by the refresh result, so it is empty on the first read."""
+    csrf = await admin_login(env)
+    page = await env.client.get("/admin/datasources/new")
+    assert page.status_code == 200
+    select = re.search(
+        r'<select name="default_database".*?</select>', page.text, re.DOTALL
+    )
+    assert select is not None, "新建页缺少默认库下拉"
+    assert re.findall(r'<option value="([^"]*)"', select.group(0)) == [""]
+
+    response = await env.client.post(
+        "/admin/datasources/new/databases/refresh",
+        data={**_connection_form(env, csrf), "default_database": ""},
+    )
+    assert response.status_code == 200, response.text
+    assert env.biz_db in response.json()["databases"]
 
 
 async def test_saved_refresh_and_effective_policies(env):
