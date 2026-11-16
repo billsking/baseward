@@ -155,6 +155,12 @@ def _map_exception(exc: BaseException, request_id: str) -> tuple[str, str]:
     return query_pipeline.map_exception(exc, request_id)
 
 
+def _literal_sql(statement: str) -> str:
+    """exec_driver_sql hands the DBAPI an empty tuple even without bound parameters, and
+    aiomysql then runs "%" formatting over the statement; literal percent signs must be doubled."""
+    return statement.replace("%", "%%")
+
+
 def _mysql_errno(exc: BaseException) -> int | None:
     original = getattr(exc, "orig", exc)
     args = getattr(original, "args", ())
@@ -257,8 +263,10 @@ async def _execute_write(services, prepared: query_pipeline.PreparedRead) -> dic
     try:
         engine = await services.pool.get(prepared.datasource)
         async with engine.begin() as conn:
-            await conn.exec_driver_sql(databases.use_statement(prepared.database))
-            result = await conn.exec_driver_sql(prepared.exec_sql)
+            await conn.exec_driver_sql(
+                _literal_sql(databases.use_statement(prepared.database))
+            )
+            result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
             row_count = max(int(result.rowcount or 0), 0)
             duration = _elapsed_ms(query_started)
             await services.audit.mark_success(request_id, duration, row_count)
@@ -569,8 +577,10 @@ async def _execute_read(
     try:
         engine = await services.pool.get(prepared.datasource)
         async with engine.connect() as conn:
-            await conn.exec_driver_sql(databases.use_statement(prepared.database))
-            result = await conn.exec_driver_sql(prepared.exec_sql)
+            await conn.exec_driver_sql(
+                _literal_sql(databases.use_statement(prepared.database))
+            )
+            result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
             columns = list(result.keys())
             raw_rows = result.fetchall()
         if prepared.row_cap and len(raw_rows) > prepared.row_cap:

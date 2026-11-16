@@ -105,6 +105,7 @@ class FakeResult:
     def __init__(self, columns: list[str], rows: list[tuple]) -> None:
         self._columns = columns
         self._rows = rows
+        self.rowcount = len(rows)
 
     def keys(self) -> list[str]:
         return self._columns
@@ -120,6 +121,10 @@ class FakeEngine:
 
     @asynccontextmanager
     async def connect(self):
+        yield _FakeConn(self)
+
+    @asynccontextmanager
+    async def begin(self):
         yield _FakeConn(self)
 
     async def exec(self, sql: str) -> FakeResult:
@@ -595,3 +600,30 @@ async def test_explicit_issue_password_not_audited() -> None:
     assert all(password not in str(call) for call in services.audit.started)
     assert all(password not in str(call) for call in services.audit.success)
     assert all(password not in str(call) for call in services.audit.denied)
+
+
+# ---------- Literal percent signs in user SQL (regression) ----------
+
+
+async def test_read_path_doubles_literal_percent_signs() -> None:
+    sql = (
+        "SELECT DATE_FORMAT(FROM_UNIXTIME(ts), '%Y-%m-%d') AS ins_day, COUNT(*) AS cnt "
+        "FROM refund_order_now GROUP BY ins_day"
+    )
+
+    result, _services, engine = await run_query(
+        settings=make_settings(), rows=[("2026-08-15", 3)], sql=sql
+    )
+
+    assert "%%Y-%%m-%%d" in engine.executed[-1]
+    assert result["rows"] == [["2026-08-15", 3]]
+
+
+async def test_write_path_doubles_literal_percent_signs() -> None:
+    datasource = make_datasource(is_read_only=0)
+    services, engine = make_services(datasource)
+    sql = "UPDATE users SET pct = pct % 100 WHERE DATE_FORMAT(ts, '%Y-%m') = '2026-08'"
+
+    await execute_sql(services, PRINCIPAL, "10.0.0.5", datasource.name, sql)
+
+    assert "%%Y-%%m" in engine.executed[-1]
