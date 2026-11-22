@@ -1,6 +1,7 @@
 """Settings validation unit tests."""
 
 import base64
+import re
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,17 @@ def test_valid_settings() -> None:
     assert settings.db_name == "db_gateway"
     assert settings.audit_retention_days == 180
     assert settings.master_key_bytes == b"k" * 32
+    assert settings.log_format == "text"
+    assert settings.metrics_enabled is False
+
+
+def test_log_format_accepts_json_case_insensitively() -> None:
+    assert make_settings(log_format="JSON").log_format == "json"
+
+
+def test_unknown_log_format_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(log_format="xml")
 
 
 def test_db_url_is_built_without_string_concat() -> None:
@@ -84,6 +96,18 @@ def test_partial_db_host_is_rejected(monkeypatch) -> None:
         Settings(_env_file=None, master_key=VALID_KEY, db_host="127.0.0.1")
 
 
+def test_audit_require_server_backend_rejects_sqlite(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("GATEWAY_DB_URL", raising=False)
+    monkeypatch.delenv("GATEWAY_DB_HOST", raising=False)
+    with pytest.raises(ConfigError):
+        Settings(
+            _env_file=None,
+            master_key=VALID_KEY,
+            db_path=str(tmp_path / "gateway.db"),
+            audit_require_server_backend=True,
+        )
+
+
 def test_missing_master_key_rejected(monkeypatch) -> None:
     monkeypatch.delenv("GATEWAY_MASTER_KEY", raising=False)
     with pytest.raises(ValidationError):
@@ -105,3 +129,17 @@ def test_master_key_not_base64_rejected() -> None:
 def test_retention_out_of_range_rejected(days: int) -> None:
     with pytest.raises(ValidationError):
         make_settings(audit_retention_days=days)
+
+
+def test_compose_and_env_example_cover_all_runtime_settings() -> None:
+    root = Path(__file__).resolve().parents[2]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (root / ".env.example").read_text(encoding="utf-8")
+    compose_keys = set(re.findall(r"^\s+(GATEWAY_[A-Z0-9_]+):", compose, re.MULTILINE))
+    env_keys = set(re.findall(r"^#?\s*(GATEWAY_[A-Z0-9_]+)=", env_example, re.MULTILINE))
+    expected = {
+        f"GATEWAY_{name.upper()}" for name in Settings.model_fields
+    } - {"GATEWAY_HOST", "GATEWAY_PORT"}
+
+    assert expected <= compose_keys
+    assert expected <= env_keys

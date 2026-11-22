@@ -192,6 +192,8 @@ def test_render_tokens():
             token_prefix="gw_abcdefg",
             enabled=1,
             created_at=datetime(2026, 10, 22, 1, 0, 0),
+            expires_at=datetime(2026, 10, 24, 1, 0, 0),
+            last_used_at=datetime(2026, 10, 22, 2, 0, 0),
             disabled_at=None,
         )
     ]
@@ -203,6 +205,7 @@ def test_render_tokens():
             "rows": rows,
             "new_token": "gw_plaintext_once",
             "values": {"user_name": "alice"},
+            "now": datetime(2026, 10, 23, 1, 0, 0),
             "datasources": [make_datasource()],
             "scope_info": {
                 1: {"summary": "数据源 1 · 表 1 · 字段 1", "restricted": True, "broken": False}
@@ -217,6 +220,9 @@ def test_render_tokens():
     assert "数据源 1 · 表 1 · 字段 1" in body
     assert 'data-scope-picker' in body
     assert 'data-default-mode="specified"' in body
+    assert 'name="expires_at"' in body
+    assert "过期时间" in body
+    assert "最近使用" in body
 
 
 def test_render_token_edit():

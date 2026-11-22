@@ -83,6 +83,8 @@
 {"error": {"code": "WRITE_ON_READONLY", "message": "数据源 demo 为只读，禁止写操作", "request_id": "..."}}
 ```
 
+工具执行、准入控制和缺失身份错误都以 MCP `isError=true` 响应携带这段 JSON。HTTP 鉴权拒绝与 `/api/exchange` 错误也使用相同的 `{"error": {"code", "message", "request_id"}}` 响应体，并返回相应的 HTTP 状态码。`request_id` 与 HTTP 响应的 `X-Request-ID`、该次调用的审计记录、日志行里的 `request_id` 完全一致，一次失败的 Agent 调用可以端到端串联。也可以自行传入 `X-Request-ID`（字母、数字、`.`、`_`、`:`、`-`，最长 128 字符）以延续上游链路 id。
+
 ### issue_export_credential
 
 ```json
@@ -116,6 +118,16 @@
 - 不要把返回的密码写进代码或配置文件；脚本从 `GATEWAY_EXPORT_PASSWORD` 环境变量读取（见 `sample_code`）。
 - 通道未启用或未配置 `ADVERTISE_HOST` 时返回 `EXPORT_UNAVAILABLE`；参数非法返回 `INVALID_ARGUMENT`。
 
+### 并发与限流
+
+五个工具（包括元数据类工具）都经过同一套准入控制：
+
+- `GATEWAY_MCP_MAX_CONCURRENT` 限制网关整体的在途工具调用数。
+- `GATEWAY_MCP_MAX_CONCURRENT_PER_TOKEN` 限制单个 Token 的在途调用数；`0` 表示不限制单 Token，只保留全局上限。
+- `GATEWAY_MCP_RATE_LIMIT_PER_MINUTE` 限制单个 Token 在固定 60 秒窗口内的调用次数；`0` 表示关闭。
+
+超过上限的调用立即返回 `TOO_MANY_CONCURRENT` 或 `RATE_LIMITED`，不会排队等待，避免一个慢查询把后续请求全部堵在网关里。被限流的调用只记日志、不写审计：为每次拒绝写一行审计，反而会放大限流本来要卸载的负载。
+
 ### Token 授权范围
 
 - **四级白名单**：数据源 → 库 → 表 → 字段。任一层留空表示该层不限制；选下级必须包含上级；表被选中但未勾选字段时，该表字段不受限。
@@ -128,6 +140,8 @@
 
 ### 错误码
 
-`missing_token` / `invalid_token`（HTTP 401）、`auth_unavailable`（HTTP 503）、`INVALID_ARGUMENT`、`DATABASE_NOT_EXPOSED`、`DATABASE_DENIED`、`DATASOURCE_NOT_FOUND`、`DATASOURCE_AMBIGUOUS`、`DATASOURCE_DISABLED`、`DATASOURCE_DENIED`、`TABLE_DENIED`、`FIELD_DENIED`、`FIELDS_REQUIRED`、`FIELD_SCOPE_CHECK_FAILED`、`EMPTY_SQL`、`SQL_PARSE_ERROR`、`MULTI_STATEMENT`、`DDL_BLOCKED`、`UNSUPPORTED_STATEMENT`、`LOCKING_READ`、`INTO_OUTFILE`、`WRITE_ON_READONLY`、`NO_WHERE`、`EXPORT_UNAVAILABLE`、`CREDENTIAL_ISSUE_DENIED`、`AUDIT_UNAVAILABLE`、`DB_UNAVAILABLE`、`DB_ERROR`、`INTERNAL_ERROR`。
+`missing_token` / `invalid_token`（HTTP 401）、`auth_unavailable`（HTTP 503）、`INVALID_ARGUMENT`、`DATABASE_NOT_EXPOSED`、`DATABASE_DENIED`、`DATASOURCE_NOT_FOUND`、`DATASOURCE_AMBIGUOUS`、`DATASOURCE_DISABLED`、`DATASOURCE_DENIED`、`TABLE_DENIED`、`FIELD_DENIED`、`FIELDS_REQUIRED`、`FIELD_SCOPE_CHECK_FAILED`、`EMPTY_SQL`、`SQL_PARSE_ERROR`、`MULTI_STATEMENT`、`DDL_BLOCKED`、`UNSUPPORTED_STATEMENT`、`LOCKING_READ`、`INTO_OUTFILE`、`WRITE_ON_READONLY`、`NO_WHERE`、`QUERY_TIMEOUT`、`WRITE_LIMIT_EXCEEDED`、`RATE_LIMITED`、`TOO_MANY_CONCURRENT`、`EXPORT_UNAVAILABLE`、`CREDENTIAL_ISSUE_DENIED`、`AUDIT_UNAVAILABLE`、`DB_UNAVAILABLE`、`DB_ERROR`、`INTERNAL_ERROR`。
+
+`NO_WHERE` 同时覆盖 WHERE 恒真的 UPDATE/DELETE（如 `WHERE 1=1`、`WHERE TRUE`）。`QUERY_TIMEOUT` 表示语句超过 `GATEWAY_MCP_QUERY_TIMEOUT_SECONDS` 并被上游 KILL；`WRITE_LIMIT_EXCEEDED` 表示 UPDATE/DELETE 影响行数超过 `GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS`，事务已回滚。`RATE_LIMITED` 表示当前 Token 用完了每分钟配额，`TOO_MANY_CONCURRENT` 表示网关或该 Token 的在途调用已达上限；两者都是瞬时错误，短暂等待后重试即可。
 
 `DATABASE_NOT_EXPOSED` 与 `DATABASE_DENIED` 的消息只含库名、不含表结构：前者说明该库没被管理员勾进数据源的可访问库，后者说明库已暴露但 Token 没有该库授权。

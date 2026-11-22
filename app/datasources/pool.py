@@ -79,6 +79,11 @@ class DataSourcePool:
 
     def __init__(self, settings: Settings) -> None:
         self._master_key = settings.master_key_bytes
+        self._pool_size = settings.datasource_pool_size
+        self._max_overflow = settings.datasource_pool_max_overflow
+        # SQLAlchemy reserves -1 for "never recycle"; a configured 0 maps onto it.
+        recycle = settings.datasource_pool_recycle_seconds
+        self._pool_recycle = recycle if recycle > 0 else -1
         self._engines: dict[int, tuple[str, AsyncEngine]] = {}
         self._lock = asyncio.Lock()
 
@@ -107,10 +112,10 @@ class DataSourcePool:
                     password,
                     datasource.default_database,
                 ),
-                pool_size=5,
-                max_overflow=5,
+                pool_size=self._pool_size,
+                max_overflow=self._max_overflow,
                 pool_pre_ping=True,
-                pool_recycle=3600,
+                pool_recycle=self._pool_recycle,
                 # OceanBase reports autocommit off in the handshake while its session stays on, so
                 # aiomysql skips SET AUTOCOMMIT and engine.begin() would not roll back.
                 connect_args={
@@ -120,6 +125,20 @@ class DataSourcePool:
             )
             self._engines[datasource.id] = (signature, engine)
             return engine
+
+    def snapshot(self) -> list[tuple[int, int, int, int]]:
+        """Pool occupancy per cached engine: (datasource_id, checked_out, size, overflow).
+
+        Called from the event loop between awaits; ``get`` only mutates the map around awaits,
+        and the copy keeps a scrape working even if a rebuild completes mid-iteration.
+        """
+        result: list[tuple[int, int, int, int]] = []
+        for datasource_id, (_signature, engine) in list(self._engines.items()):
+            pool = engine.pool
+            result.append(
+                (datasource_id, pool.checkedout(), pool.size(), pool.overflow())
+            )
+        return result
 
     async def invalidate(self, datasource_id: int) -> None:
         async with self._lock:

@@ -64,7 +64,7 @@ def make_services(db: FakeDb, cookie_secure: bool = False):
     return SimpleNamespace(
         session_factory=FakeFactory(db),
         session_key=b"s" * 32,
-        settings=SimpleNamespace(cookie_secure=cookie_secure),
+        settings=SimpleNamespace(cookie_secure=cookie_secure, admin_session_idle_minutes=30),
     )
 
 
@@ -183,7 +183,9 @@ async def test_require_admin_rejects_deleted_admin():
 
 
 def test_verify_csrf():
-    session = AdminSession(admin_id=1, username="admin", version=0, csrf="a" * 64)
+    session = AdminSession(
+        admin_id=1, username="admin", version=0, csrf="a" * 64, last=0
+    )
     verify_csrf(session, "a" * 64)
     with pytest.raises(CSRFError):
         verify_csrf(session, "b" * 64)

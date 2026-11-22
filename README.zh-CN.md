@@ -14,7 +14,8 @@ BaseWard 是面向 AI 客户端的 MCP 数据库网关。它挡在你的 Agent �
 
 - MCP 端点：`POST /mcp`（Streamable HTTP，无状态）
 - 管理端：`/admin`
-- 健康检查：`/healthz`
+- 健康检查：`/healthz`；就绪检查：`/readyz`；Prometheus 指标：`/metrics`（需显式开启）
+- 每个 HTTP 响应都带 `X-Request-ID`，同一个 id 会出现在审计记录和日志行里
 - 运行时：Python 3.12+ / Docker
 
 ## 为什么需要
@@ -174,15 +175,14 @@ openclaw plugins install ./integrations/openclaw-baseward --link
 - 应用层策略不能替代数据库最小权限，上游账号只授予它真正需要的权限。
 - 网关自身只监听 HTTP，生产环境必须在前面用反代终止 TLS。
 
-已知限制（网关内无 TLS、主密钥暂不支持轮换、无行级规则、每用户单 Token、无限流）在 [SECURITY.zh-CN.md](SECURITY.zh-CN.md) 中逐条给出代码证据。
+已知限制（网关内无 TLS、主密钥暂不支持轮换、无行级规则、每用户仅一个未过期的启用 Token、不支持自动轮换）在 [SECURITY.zh-CN.md](SECURITY.zh-CN.md) 中逐条给出代码证据。Token 可设置可选过期时间，MCP 已提供并发与速率限制。
 
 ## 路线图
 
 - 一键演示：`docker compose up` 内置 MySQL 并自动生成密钥
 - 在 CI 里跑通 MySQL 协议族兼容性矩阵（MariaDB、TiDB、OceanBase、PolarDB），让 [docs/compatibility.zh-CN.md](docs/compatibility.zh-CN.md) 状态表里的行从「预期」变成「已验证」
 - PostgreSQL 支持（以及它前置需要的引擎抽象改造）
-- Token 过期与轮换、每用户多 Token
-- Prometheus 指标
+- Token 自动轮换、每用户多 Token
 - 行级权限、SSO/OIDC（企业版）
 
 ## 文档

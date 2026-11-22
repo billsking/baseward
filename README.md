@@ -14,7 +14,8 @@ For chat bots it goes one level deeper: an OpenClaw bridge plugin hands **each D
 
 - MCP endpoint: `POST /mcp` (Streamable HTTP, stateless)
 - Admin console: `/admin` (Chinese and English)
-- Health check: `/healthz`
+- Health check: `/healthz`; readiness: `/readyz`; Prometheus metrics: `/metrics` (opt-in)
+- Every HTTP response carries `X-Request-ID`, and the same id appears on audit rows and log lines
 - Runtime: Python 3.12+ / Docker
 
 ## Why
@@ -206,7 +207,7 @@ and exchange and use must come from the **same egress IP**. Protocol, error code
 - Application policy is not a replacement for database least privilege — grant the upstream account only what it needs.
 - The gateway itself speaks HTTP; terminate TLS in a reverse proxy in front of it.
 
-Known limitations — no TLS inside the gateway, the master key cannot be rotated yet, no row-level rules, one token per user, no rate limiting — are listed with code evidence in [SECURITY.md](SECURITY.md).
+Known limitations — no TLS inside the gateway, the master key cannot be rotated yet, no row-level rules, one non-expired enabled token per user, and no automatic token rotation — are listed with code evidence in [SECURITY.md](SECURITY.md). Tokens can have an optional expiry, and MCP has concurrency and rate limits.
 
 ## Roadmap
 
@@ -214,8 +215,7 @@ Known limitations — no TLS inside the gateway, the master key cannot be rotate
 - Compatibility matrix executed in CI for the MySQL family (MariaDB, TiDB, OceanBase, PolarDB), so
   rows in [docs/compatibility.md](docs/compatibility.md) move from *expected* to *verified*
 - PostgreSQL support (and the engine abstraction it needs first)
-- Token expiry and rotation, multiple tokens per user
-- Prometheus metrics
+- Automatic token rotation and multiple tokens per user
 - Row-level rules, SSO/OIDC (enterprise)
 
 ## Documentation

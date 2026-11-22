@@ -43,3 +43,23 @@ async def test_pool_disables_autocommit_at_connect(captured_engine):
     connect_args = captured_engine["kwargs"]["connect_args"]
     assert connect_args["init_command"] == "SET autocommit=0"
     assert connect_args["connect_timeout"] == pool_module.CONNECT_TIMEOUT_SECONDS
+
+
+async def test_pool_sizing_comes_from_settings(captured_engine):
+    pool = pool_module.DataSourcePool(
+        Settings(
+            _env_file=None,
+            db_host="127.0.0.1",
+            db_user="u",
+            db_password="p",
+            datasource_pool_size=9,
+            datasource_pool_max_overflow=2,
+            datasource_pool_recycle_seconds=0,
+        )
+    )
+    await pool.get(_datasource())
+    kwargs = captured_engine["kwargs"]
+    assert kwargs["pool_size"] == 9
+    assert kwargs["max_overflow"] == 2
+    # SQLAlchemy treats -1 as "never recycle"; a configured 0 must not mean "recycle every checkout".
+    assert kwargs["pool_recycle"] == -1

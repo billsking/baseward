@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 
 from app.clock import utcnow
 from app.config import Settings
-from app.db.models import AuditLog, ShortCredential
+from app.db.models import ApiToken, AuditLog, ShortCredential
 from app.errors import ValidationError
 from app.exchange.service import ShortCredentialError
 from app.main import create_app
@@ -118,7 +118,7 @@ async def test_exchange_rejects_access_token(env) -> None:
     token, _ = await services.tokens.create("alice")
     response = await _do_exchange(client, token)
     assert response.status_code == 403
-    assert response.json()["error"] == "exchange_token_required"
+    assert response.json()["error"]["code"] == "exchange_token_required"
 
 
 async def test_exchange_rejects_missing_actor(env) -> None:
@@ -126,7 +126,7 @@ async def test_exchange_rejects_missing_actor(env) -> None:
     token, _ = await _exchange_token(services)
     response = await _do_exchange(client, token, headers={})
     assert response.status_code == 403
-    assert response.json()["error"] == "actor_required"
+    assert response.json()["error"]["code"] == "actor_required"
 
 
 async def test_exchange_rejects_invalid_actor(env) -> None:
@@ -136,17 +136,27 @@ async def test_exchange_rejects_invalid_actor(env) -> None:
         client, token, headers={"X-BaseWard-Actor-Provider": "DingTalk", "X-BaseWard-Actor-Id": "x"}
     )
     assert response.status_code == 403
-    assert response.json()["error"] == "actor_invalid"
+    assert response.json()["error"]["code"] == "actor_invalid"
 
 
 async def test_exchange_rejects_bad_bearer(env) -> None:
     _, client = env
-    response = await client.post("/api/exchange", json={})
+    response = await client.post(
+        "/api/exchange", headers={"X-Request-ID": "trace-exchange"}, json={}
+    )
     assert response.status_code == 401
+    assert response.json()["error"] == {
+        "code": "missing_token",
+        "message": "缺少 Bearer Token",
+        "request_id": "trace-exchange",
+    }
+    assert response.headers["x-request-id"] == "trace-exchange"
     response = await client.post(
         "/api/exchange", headers={"Authorization": "Bearer gw_unknown"}, json={}
     )
     assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_token"
+    assert response.json()["error"]["request_id"] == response.headers["x-request-id"]
 
 
 async def test_exchange_ttl_bounds(env) -> None:
@@ -155,7 +165,7 @@ async def test_exchange_ttl_bounds(env) -> None:
     assert (await _do_exchange(client, token, json={"ttl_minutes": 60})).status_code == 200
     too_long = await _do_exchange(client, token, json={"ttl_minutes": 61})
     assert too_long.status_code == 400
-    assert too_long.json()["error"] == "invalid_request"
+    assert too_long.json()["error"]["code"] == "invalid_request"
     assert (await _do_exchange(client, token, json={"ttl_minutes": 0})).status_code == 400
 
 
@@ -205,7 +215,7 @@ async def test_mcp_rejects_exchange_token(env) -> None:
         json=INITIALIZE,
     )
     assert response.status_code == 403
-    assert response.json()["error"] == "exchange_only"
+    assert response.json()["error"]["code"] == "exchange_only"
 
 
 async def test_mcp_accepts_short_credential_without_headers(env) -> None:
@@ -239,7 +249,7 @@ async def test_mcp_short_credential_actor_mismatch_denied(env) -> None:
         json=INITIALIZE,
     )
     assert response.status_code == 403
-    assert response.json()["error"] == "actor_mismatch"
+    assert response.json()["error"]["code"] == "actor_mismatch"
 
 
 async def test_mcp_short_credential_matching_headers_allowed(env) -> None:
@@ -291,6 +301,20 @@ async def test_short_credential_parent_disabled(env) -> None:
     token, row = await _exchange_token(services)
     credential = (await _do_exchange(client, token)).json()["credential"]
     await services.tokens.disable(row.id)
+    with pytest.raises(ShortCredentialError) as exc:
+        await services.short_credentials.authenticate(credential, "127.0.0.1")
+    assert exc.value.code == "PARENT_TOKEN_DISABLED"
+
+
+async def test_short_credential_parent_expired(env) -> None:
+    services, client = env
+    token, row = await _exchange_token(services)
+    credential = (await _do_exchange(client, token)).json()["credential"]
+    async with services.session_factory() as session:
+        await session.execute(
+            update(ApiToken).where(ApiToken.id == row.id).values(expires_at=utcnow())
+        )
+        await session.commit()
     with pytest.raises(ShortCredentialError) as exc:
         await services.short_credentials.authenticate(credential, "127.0.0.1")
     assert exc.value.code == "PARENT_TOKEN_DISABLED"
@@ -395,4 +419,6 @@ async def test_sqlite_upgrade_adds_kind_and_short_credential(tmp_path) -> None:
         }
     await engine.dispose()
     assert "token_kind" in columns
+    assert "expires_at" in columns
+    assert "last_used_at" in columns
     assert "short_credential" in tables

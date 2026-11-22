@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timezone
-from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -13,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.errors import ValidationError
 from app.i18n import t
 from app.netip import client_ip_from_scope
+from app.observability import new_request_id
 from app.security.actor import ActorError, current_actor, parse_actor_headers
 from app.security.principal import current_client_ip, current_principal
 
@@ -26,17 +26,23 @@ class ExchangeRequest(BaseModel):
 
 
 def _reject(status_code: int, error: str, message: str | None = None) -> JSONResponse:
-    body: dict[str, str] = {"error": error}
-    if message:
-        body["message"] = message
-    return JSONResponse(body, status_code=status_code)
+    return JSONResponse(
+        {
+            "error": {
+                "code": error,
+                "message": message or t(f"error.auth.{error}"),
+                "request_id": new_request_id(),
+            }
+        },
+        status_code=status_code,
+    )
 
 
 @router.post("/api/exchange")
 async def exchange(request: Request, payload: ExchangeRequest | None = None) -> JSONResponse:
     services = request.app.state.services
     client_ip = client_ip_from_scope(request.scope, services.trusted_proxies)
-    request_id = str(uuid4())
+    request_id = new_request_id()
 
     if not await services.mcp_allowlist.is_allowed(client_ip):
         logger.warning("channel=exchange 请求被 IP 白名单拒绝 ip=%s", client_ip)
@@ -66,7 +72,7 @@ async def exchange(request: Request, payload: ExchangeRequest | None = None) -> 
             request_id, "exchange", principal, None, "exchange", None, client_ip,
             "EXCHANGE_TOKEN_REQUIRED", t("error.exchange.token_required"),
         )
-        return _reject(403, "exchange_token_required")
+        return _reject(403, "exchange_token_required", t("error.exchange.token_required"))
 
     try:
         actor = parse_actor_headers(request.headers)
@@ -76,7 +82,7 @@ async def exchange(request: Request, payload: ExchangeRequest | None = None) -> 
             request_id, "exchange", principal, None, "exchange", None, client_ip,
             exc.code, str(exc),
         )
-        return _reject(403, exc.code.lower())
+        return _reject(403, exc.code.lower(), str(exc))
 
     principal_token = current_principal.set(principal)
     actor_token = current_actor.set(actor)

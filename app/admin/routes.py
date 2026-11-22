@@ -27,6 +27,7 @@ from app.tokens.scope import UNRESTRICTED, TokenScope
 from app.masking.rules import AUTO_RULES, PATTERNS, STRICTNESS, detect_auto
 from app.netallow import save_many
 from app.netip import client_ip_from_scope
+from app.observability import new_request_id
 from app.security.admin_auth import (
     AdminSession,
     authenticate_admin,
@@ -111,6 +112,7 @@ async def _tokens_page_context(services, **extra) -> dict:
             for row in rows
         },
         "datasources": await services.datasources.list_all(),
+        "now": utcnow(),
         **extra,
     }
 
@@ -200,18 +202,61 @@ async def login_page(request: Request) -> Response:
 async def login_submit(request: Request) -> Response:
     services = _services(request)
     form = await request.form()
-    username = str(form.get("username") or "")
+    username = str(form.get("username") or "").strip()
     password = str(form.get("password") or "")
+    client_ip = _client_ip(request)
+    request_id = new_request_id()
+
+    retry_after = services.login_guard.retry_after(username, client_ip)
+    if retry_after:
+        logger.warning(
+            "管理员登录被锁定 username=%s ip=%s retry_after=%s",
+            username,
+            client_ip,
+            retry_after,
+        )
+        await services.audit.record_admin_login(
+            request_id, username, client_ip, False, "LOCKED_OUT"
+        )
+        return render_login(
+            request,
+            t("login.locked", seconds=retry_after),
+            status_code=429,
+        )
+
     try:
         admin = await authenticate_admin(services, username, password)
     except SQLAlchemyError:
         logger.exception("管理端登录查询管理库失败")
         return render_login(request, "管理库暂时不可用，请稍后重试", status_code=503)
     if admin is None:
+        locked_for = services.login_guard.record_failure(username, client_ip)
+        await services.audit.record_admin_login(
+            request_id,
+            username,
+            client_ip,
+            False,
+            "LOCKED_OUT" if locked_for else "INVALID_CREDENTIALS",
+        )
+        logger.warning("管理员登录失败 username=%s ip=%s", username, client_ip)
+        if locked_for:
+            return render_login(
+                request,
+                t("login.locked", seconds=locked_for),
+                status_code=429,
+            )
         return render_login(request, "用户名或密码错误", status_code=401)
+
+    services.login_guard.reset(username, client_ip)
+    await services.audit.record_admin_login(request_id, admin.username, client_ip, True)
     response = RedirectResponse("/admin", status_code=302)
     create_session(response, admin, services)
-    logger.info("管理员登录成功 username=%s", admin.username)
+    logger.info(
+        "管理员登录成功 username=%s ip=%s request_id=%s",
+        admin.username,
+        client_ip,
+        request_id,
+    )
     return response
 
 
@@ -842,12 +887,16 @@ async def token_create(request: Request) -> Response:
     user_name = str(form.get("user_name") or "")
     actor_policy = str(form.get("actor_policy") or "ignore")
     token_kind = str(form.get("token_kind") or "access")
+    raw_expires_at = str(form.get("expires_at") or "").strip()
     raw_scope = _scope_payload(form)
     error = None
     plaintext = None
     try:
+        expires_at = _parse_local_datetime(raw_expires_at)
+        if raw_expires_at and expires_at is None:
+            raise ValidationError(t("error.token.expiry_invalid"))
         plaintext, _ = await services.tokens.create(
-            user_name, _parse_scope(form), actor_policy, token_kind
+            user_name, _parse_scope(form), actor_policy, token_kind, expires_at
         )
     except ValidationError as exc:
         error = str(exc)
@@ -863,6 +912,7 @@ async def token_create(request: Request) -> Response:
                 "user_name": user_name,
                 "actor_policy": actor_policy,
                 "token_kind": token_kind,
+                "expires_at": raw_expires_at,
             },
             "scope_json": raw_scope,
             "error": error,
@@ -1411,7 +1461,12 @@ async def _credential_form_context(
 ) -> dict:
     """Issue-form context: datasource and target database are filtered by the selected token's scope."""
     datasources = [item for item in await services.datasources.list_all() if item.enabled]
-    tokens = [item for item in await services.tokens.list_all() if item.enabled]
+    now = utcnow()
+    tokens = [
+        item
+        for item in await services.tokens.list_all()
+        if item.enabled and (item.expires_at is None or item.expires_at > now)
+    ]
     scopes = await services.tokens.scopes_for([item.id for item in tokens])
     token = next(
         (row for row in tokens if row.id == selected_token_id),

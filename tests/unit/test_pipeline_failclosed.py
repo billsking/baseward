@@ -1,5 +1,6 @@
 """Execution-pipeline orchestration unit tests (fake services, no MySQL)."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from app.datasources import databases as databases_module
 from app.datasources.databases import DatabasePolicy
 from app.errors import AuditUnavailableError
+from app.mcp import pipeline as mcp_pipeline
 from app.mcp.pipeline import execute_sql
 from app.query import pipeline as query_pipeline
 from app.query.pipeline import prepare_read, suggest_databases
@@ -425,3 +427,165 @@ async def test_suggest_databases_degrades_to_empty_on_metadata_failure(
     assert await suggest_databases(
         services, PRINCIPAL, datasource, "orders", "main"
     ) == []
+
+
+# ---------- MCP execution guardrails (query timeout and write row cap) ----------
+
+
+class _ExecResult:
+    def __init__(self, rowcount: int = 0, scalar=None) -> None:
+        self.rowcount = rowcount
+        self._scalar = scalar
+
+    def scalar(self):
+        return self._scalar
+
+
+class _ExecConnection:
+    def __init__(self, *, rowcount: int = 0, delay: float = 0.0) -> None:
+        self.rowcount = rowcount
+        self.delay = delay
+        self.sql: list[str] = []
+        self.exited: list[type[BaseException] | None] = []
+        self.invalidated = False
+
+    async def exec_driver_sql(self, sql, params=None):
+        self.sql.append(sql)
+        upper = sql.strip().upper()
+        if upper.startswith("SELECT CONNECTION_ID"):
+            return _ExecResult(scalar=42)
+        if self.delay and upper.startswith(("UPDATE", "DELETE", "SELECT *")):
+            await asyncio.sleep(self.delay)
+        return _ExecResult(rowcount=self.rowcount)
+
+    async def invalidate(self) -> None:
+        self.invalidated = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited.append(exc_type)
+        return False
+
+
+class _ExecEngine:
+    def __init__(self, conn: _ExecConnection) -> None:
+        self.conn = conn
+
+    def begin(self):
+        return self.conn
+
+    def connect(self):
+        return self.conn
+
+
+class _ExecAudit:
+    def __init__(self) -> None:
+        self.success: list[tuple] = []
+        self.errors: list[tuple] = []
+
+    async def mark_success(self, *args) -> None:
+        self.success.append(args)
+
+    async def mark_error_best_effort(self, *args) -> None:
+        self.errors.append(args)
+
+
+def exec_services(engine: _ExecEngine, *, timeout: float = 30.0, limit: int = 1000):
+    async def _get(datasource):
+        return engine
+
+    audit = _ExecAudit()
+    services = SimpleNamespace(
+        pool=SimpleNamespace(get=_get),
+        audit=audit,
+        settings=SimpleNamespace(
+            mcp_query_timeout_seconds=timeout,
+            mcp_write_max_affected_rows=limit,
+        ),
+    )
+    return services, audit
+
+
+def prepared_write() -> SimpleNamespace:
+    return SimpleNamespace(
+        request_id="req-write",
+        datasource=make_datasource(is_read_only=0),
+        database="demo",
+        exec_sql="UPDATE users SET name='x' WHERE id=1",
+        decision=SimpleNamespace(statement_type="Update", is_write=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_write_above_row_limit_is_rolled_back() -> None:
+    conn = _ExecConnection(rowcount=1001)
+    engine = _ExecEngine(conn)
+    services, audit = exec_services(engine, limit=1000)
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp_pipeline._execute_write(services, prepared_write())
+
+    assert error_code(exc_info.value) == "WRITE_LIMIT_EXCEEDED"
+    assert audit.success == []
+    assert audit.errors[-1][1] == "WRITE_LIMIT_EXCEEDED"
+    assert conn.exited[-1] is mcp_pipeline._WriteLimitExceeded
+
+
+@pytest.mark.asyncio
+async def test_write_within_row_limit_succeeds() -> None:
+    conn = _ExecConnection(rowcount=10)
+    engine = _ExecEngine(conn)
+    services, audit = exec_services(engine, limit=1000)
+
+    result = await mcp_pipeline._execute_write(services, prepared_write())
+
+    assert result["row_count"] == 10
+    assert audit.success and audit.errors == []
+    assert conn.exited[-1] is None
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_kills_query_and_discards_connection() -> None:
+    conn = _ExecConnection(rowcount=1, delay=0.2)
+    engine = _ExecEngine(conn)
+    services, audit = exec_services(engine, timeout=0.01)
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp_pipeline._execute_write(services, prepared_write())
+
+    assert error_code(exc_info.value) == "QUERY_TIMEOUT"
+    assert audit.success == []
+    assert conn.invalidated is True
+    assert "KILL QUERY 42" in conn.sql
+
+
+@pytest.mark.asyncio
+async def test_read_timeout_kills_query_and_discards_connection(monkeypatch) -> None:
+    concluded: list[str] = []
+
+    async def _conclude_error(services, prepared, exc, code: str) -> None:
+        concluded.append(code)
+
+    monkeypatch.setattr(query_pipeline, "conclude_error", _conclude_error)
+    conn = _ExecConnection(delay=0.2)
+    engine = _ExecEngine(conn)
+    services, _ = exec_services(engine, timeout=0.01)
+    prepared = SimpleNamespace(
+        request_id="req-read",
+        datasource=make_datasource(is_read_only=1),
+        database="demo",
+        exec_sql="SELECT * FROM users",
+        row_cap=None,
+        plan=SimpleNamespace(),
+        decision=SimpleNamespace(statement_type="Select", is_write=False),
+    )
+
+    with pytest.raises(ToolError) as exc_info:
+        await mcp_pipeline._execute_read(services, PRINCIPAL, "127.0.0.1", prepared, "SELECT * FROM users")
+
+    assert error_code(exc_info.value) == "QUERY_TIMEOUT"
+    assert concluded == ["QUERY_TIMEOUT"]
+    assert conn.invalidated is True
+    assert "KILL QUERY 42" in conn.sql

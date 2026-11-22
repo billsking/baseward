@@ -110,7 +110,7 @@ async def test_mcp_channel_is_open_until_a_list_is_saved(env):
     assert (await _save(env, csrf, "", "10.255.255.1")).status_code == 302
     denied = await env.client.post(MCP_URL, headers=headers, json={})
     assert denied.status_code == 403
-    assert denied.json()["error"] == "ip_not_allowed"
+    assert denied.json()["error"]["code"] == "ip_not_allowed"
     assert "www-authenticate" not in denied.headers
     await wait_deny_reason(env, "IP_NOT_ALLOWED", event_type="auth_failure")
 

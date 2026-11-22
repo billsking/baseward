@@ -21,11 +21,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETENTION_DAYS = 180
 CLEANUP_BATCH_SIZE = 5000
 ERROR_MESSAGE_LIMIT = 4000
+CLEANUP_LAST_RUN_KEY = "audit_cleanup_last_run"
+CLEANUP_CATCHUP_INTERVAL = timedelta(hours=20)
 
 
 def _like_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
+
+def _as_naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class AuditService:
@@ -308,6 +316,33 @@ class AuditService:
         except Exception:  # noqa: BLE001 - best effort
             logger.exception("认证失败审计写入失败 request_id=%s", request_id)
 
+    async def record_admin_login(
+        self,
+        request_id: str,
+        username: str,
+        client_ip: str,
+        success: bool,
+        reason: str | None = None,
+    ) -> None:
+        """Admin sign-in outcome; passwords never reach the audit, and failures are best effort."""
+        now = utcnow()
+        row = AuditLog(
+            request_id=request_id,
+            event_type="admin_login",
+            user_name=(username or "").strip()[:64] or "unknown",
+            status="success" if success else "denied",
+            deny_reason=None if success else (reason or "INVALID_CREDENTIALS")[:512],
+            client_ip=client_ip[:64] if client_ip else None,
+            created_at=now,
+            finished_at=now,
+        )
+        try:
+            async with self._session_factory() as session:
+                session.add(row)
+                await session.commit()
+        except Exception:  # noqa: BLE001 - the sign-in response must not depend on auditing
+            logger.exception("管理员登录审计写入失败 request_id=%s", request_id)
+
     async def record_setting_change(
         self,
         setting_key: str,
@@ -586,3 +621,44 @@ class AuditService:
             if len(ids) < CLEANUP_BATCH_SIZE:
                 break
         return deleted
+
+    async def cleanup_due(self, now_utc: datetime | None = None) -> bool:
+        """True when retention cleanup has not run for a full catch-up interval."""
+        try:
+            async with self._session_factory() as session:
+                row = await session.get(SystemSetting, CLEANUP_LAST_RUN_KEY)
+                if row is None or not row.setting_value:
+                    return True
+                try:
+                    last = datetime.fromisoformat(row.setting_value)
+                except ValueError:
+                    logger.warning("审计清理时间格式非法，将立即执行：%s", row.setting_value)
+                    return True
+                return (
+                    _as_naive_utc(now_utc or utcnow()) - _as_naive_utc(last)
+                    >= CLEANUP_CATCHUP_INTERVAL
+                )
+        except Exception:  # noqa: BLE001 - let the cleanup itself surface store failures
+            logger.exception("读取审计清理时间失败")
+            return False
+
+    async def mark_cleanup_done(self, now_utc: datetime | None = None) -> None:
+        """Best-effort record of the last successful retention run."""
+        now = _as_naive_utc(now_utc or utcnow())
+        try:
+            async with self._session_factory() as session:
+                row = await session.get(SystemSetting, CLEANUP_LAST_RUN_KEY)
+                if row is None:
+                    session.add(
+                        SystemSetting(
+                            setting_key=CLEANUP_LAST_RUN_KEY,
+                            setting_value=now.isoformat(),
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    row.setting_value = now.isoformat()
+                    row.updated_at = now
+                await session.commit()
+        except Exception:  # noqa: BLE001 - the next cycle retries
+            logger.exception("记录审计清理时间失败")

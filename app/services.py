@@ -15,9 +15,11 @@ from app.datasources.service import DataSourceService
 from app.db.schema import create_management_engine, create_session_factory
 from app.exchange.service import ShortCredentialService
 from app.masking.service import MaskingService
+from app.mcp.limits import McpLimiter
 from app.netallow import EXPORT_ALLOW_KEY, MCP_ALLOW_KEY, IpAllowlist
 from app.netip import parse_allow_networks
 from app.security.crypto import derive_key
+from app.security.login_guard import LoginGuard
 from app.tokens.service import TokenService
 
 
@@ -28,7 +30,17 @@ class Services:
         self.session_factory: async_sessionmaker[AsyncSession] = create_session_factory(self.engine)
         self.pool = DataSourcePool(settings)
         self.export_pool = ExportPool(settings)
+        self.mcp_limiter = McpLimiter(
+            settings.mcp_max_concurrent,
+            settings.mcp_max_concurrent_per_token,
+            settings.mcp_rate_limit_per_minute,
+        )
         self.audit = AuditService(self.session_factory)
+        self.login_guard = LoginGuard(
+            settings.admin_login_max_attempts,
+            settings.admin_login_window_seconds,
+            settings.admin_login_lock_seconds,
+        )
         self.datasources = DataSourceService(
             self.session_factory, settings, self.pool, self.export_pool
         )

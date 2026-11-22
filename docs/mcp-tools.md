@@ -83,6 +83,8 @@ Errors are returned with MCP `isError=true`, and the text is JSON:
 {"error": {"code": "WRITE_ON_READONLY", "message": "数据源 demo 为只读，禁止写操作", "request_id": "..."}}
 ```
 
+Tool execution, admission-control and missing-principal errors use this JSON inside MCP `isError=true` responses. HTTP authentication rejections and `/api/exchange` errors use the same `{"error": {"code", "message", "request_id"}}` body with the appropriate HTTP status. `request_id` equals the HTTP response's `X-Request-ID`, the audit row for that call, and the `request_id` field on log lines, so one failing agent call can be traced end to end. Send your own `X-Request-ID` (letters, digits, `.`, `_`, `:`, `-`, up to 128 characters) to keep an upstream trace id.
+
 ### issue_export_credential
 
 ```json
@@ -116,6 +118,16 @@ When you already know the result set will exceed the return limit, or that `exec
 - Do not write the returned password into code or configuration files; the script reads it from the `GATEWAY_EXPORT_PASSWORD` environment variable (see `sample_code`).
 - When the channel is not enabled or `ADVERTISE_HOST` is not configured, the call returns `EXPORT_UNAVAILABLE`; invalid parameters return `INVALID_ARGUMENT`.
 
+### Concurrency and rate limits
+
+All five tools go through the same admission control, including the metadata tools:
+
+- `GATEWAY_MCP_MAX_CONCURRENT` caps in-flight tool calls across the gateway.
+- `GATEWAY_MCP_MAX_CONCURRENT_PER_TOKEN` caps in-flight calls per token; `0` disables the per-token cap and leaves only the global one.
+- `GATEWAY_MCP_RATE_LIMIT_PER_MINUTE` caps a token's tool calls per fixed 60-second window; `0` disables it.
+
+A call over a cap is rejected immediately with `TOO_MANY_CONCURRENT` or `RATE_LIMITED`; it is never queued, so a slow query cannot pile up requests behind it. Throttled calls are logged but not written to the audit log — auditing every rejection would amplify the very load the limiter sheds.
+
 ### Token scopes
 
 - **Four-level allowlist**: datasource → database → table → column. An empty level means no restriction at that level; selecting a lower level must include its parent; when a table is selected but no columns are checked, that table's columns are unrestricted.
@@ -128,6 +140,8 @@ When you already know the result set will exceed the return limit, or that `exec
 
 ### Error codes
 
-`missing_token` / `invalid_token` (HTTP 401), `auth_unavailable` (HTTP 503), `INVALID_ARGUMENT`, `DATABASE_NOT_EXPOSED`, `DATABASE_DENIED`, `DATASOURCE_NOT_FOUND`, `DATASOURCE_AMBIGUOUS`, `DATASOURCE_DISABLED`, `DATASOURCE_DENIED`, `TABLE_DENIED`, `FIELD_DENIED`, `FIELDS_REQUIRED`, `FIELD_SCOPE_CHECK_FAILED`, `EMPTY_SQL`, `SQL_PARSE_ERROR`, `MULTI_STATEMENT`, `DDL_BLOCKED`, `UNSUPPORTED_STATEMENT`, `LOCKING_READ`, `INTO_OUTFILE`, `WRITE_ON_READONLY`, `NO_WHERE`, `EXPORT_UNAVAILABLE`, `CREDENTIAL_ISSUE_DENIED`, `AUDIT_UNAVAILABLE`, `DB_UNAVAILABLE`, `DB_ERROR`, `INTERNAL_ERROR`.
+`missing_token` / `invalid_token` (HTTP 401), `auth_unavailable` (HTTP 503), `INVALID_ARGUMENT`, `DATABASE_NOT_EXPOSED`, `DATABASE_DENIED`, `DATASOURCE_NOT_FOUND`, `DATASOURCE_AMBIGUOUS`, `DATASOURCE_DISABLED`, `DATASOURCE_DENIED`, `TABLE_DENIED`, `FIELD_DENIED`, `FIELDS_REQUIRED`, `FIELD_SCOPE_CHECK_FAILED`, `EMPTY_SQL`, `SQL_PARSE_ERROR`, `MULTI_STATEMENT`, `DDL_BLOCKED`, `UNSUPPORTED_STATEMENT`, `LOCKING_READ`, `INTO_OUTFILE`, `WRITE_ON_READONLY`, `NO_WHERE`, `QUERY_TIMEOUT`, `WRITE_LIMIT_EXCEEDED`, `RATE_LIMITED`, `TOO_MANY_CONCURRENT`, `EXPORT_UNAVAILABLE`, `CREDENTIAL_ISSUE_DENIED`, `AUDIT_UNAVAILABLE`, `DB_UNAVAILABLE`, `DB_ERROR`, `INTERNAL_ERROR`.
+
+`NO_WHERE` also covers UPDATE/DELETE whose `WHERE` is always true (for example `WHERE 1=1` or `WHERE TRUE`). `QUERY_TIMEOUT` means the statement exceeded `GATEWAY_MCP_QUERY_TIMEOUT_SECONDS` and was killed upstream. `WRITE_LIMIT_EXCEEDED` means the UPDATE/DELETE touched more than `GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS` rows and was rolled back. `RATE_LIMITED` means the token spent its per-minute budget, and `TOO_MANY_CONCURRENT` means the gateway or the token already has the maximum number of calls in flight; both are transient and safe to retry after a short delay.
 
 The messages of `DATABASE_NOT_EXPOSED` and `DATABASE_DENIED` contain only the database name, not table schemas: the former says an admin has not checked that database into the datasource's accessible databases, the latter says the database is exposed but the token has no authorization for it.

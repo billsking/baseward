@@ -5,7 +5,8 @@ from __future__ import annotations
 import hmac
 import logging
 import secrets
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import select
@@ -23,6 +24,12 @@ COOKIE_NAME = "gw_admin_session"
 SESSION_MAX_AGE = 28800
 SESSION_SALT = "dbgw-admin-session"
 CSRF_TOKEN_BYTES = 32
+# Refresh the signed cookie at most this often; without it every admin page view would re-sign.
+SESSION_REFRESH_SECONDS = 60
+
+
+def _now() -> int:
+    return int(time.time())
 
 
 @dataclass(frozen=True)
@@ -31,27 +38,14 @@ class AdminSession:
     username: str
     version: int
     csrf: str
+    last: int
 
 
 def _serializer(services) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(services.session_key, salt=SESSION_SALT)
 
 
-def create_session(response: Response, admin: AdminUser, services) -> AdminSession:
-    csrf = secrets.token_hex(CSRF_TOKEN_BYTES)
-    session = AdminSession(
-        admin_id=admin.id,
-        username=admin.username,
-        version=admin.session_version,
-        csrf=csrf,
-    )
-    payload = {
-        "uid": session.admin_id,
-        "uname": session.username,
-        "ver": session.version,
-        "csrf": session.csrf,
-    }
-    token = _serializer(services).dumps(payload)
+def _set_cookie(response: Response, token: str, services) -> None:
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -61,13 +55,32 @@ def create_session(response: Response, admin: AdminUser, services) -> AdminSessi
         path="/admin",
         secure=services.settings.cookie_secure,
     )
+
+
+def serialize_session(session: AdminSession, services) -> str:
+    payload = {
+        "uid": session.admin_id,
+        "uname": session.username,
+        "ver": session.version,
+        "csrf": session.csrf,
+        "last": session.last,
+    }
+    return _serializer(services).dumps(payload)
+
+
+def create_session(response: Response, admin: AdminUser, services) -> AdminSession:
+    session = AdminSession(
+        admin_id=admin.id,
+        username=admin.username,
+        version=admin.session_version,
+        csrf=secrets.token_hex(CSRF_TOKEN_BYTES),
+        last=_now(),
+    )
+    _set_cookie(response, serialize_session(session, services), services)
     return session
 
 
-def read_session(request: Request, services) -> AdminSession | None:
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
+def read_session_token(token: str, services) -> AdminSession | None:
     try:
         payload = _serializer(services).loads(token, max_age=SESSION_MAX_AGE)
     except (BadSignature, SignatureExpired):
@@ -78,11 +91,53 @@ def read_session(request: Request, services) -> AdminSession | None:
     username = payload.get("uname")
     version = payload.get("ver")
     csrf = payload.get("csrf")
+    last = payload.get("last")
     if not isinstance(admin_id, int) or not isinstance(username, str):
         return None
     if not isinstance(version, int) or not isinstance(csrf, str):
         return None
-    return AdminSession(admin_id=admin_id, username=username, version=version, csrf=csrf)
+    # Tokens issued before the idle timer existed have no last; force one re-login.
+    if not isinstance(last, int):
+        return None
+    idle_seconds = services.settings.admin_session_idle_minutes * 60
+    if _now() - last > idle_seconds:
+        return None
+    return AdminSession(
+        admin_id=admin_id,
+        username=username,
+        version=version,
+        csrf=csrf,
+        last=last,
+    )
+
+
+def read_session(request: Request, services) -> AdminSession | None:
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    return read_session_token(token, services)
+
+
+def refresh_needed(session: AdminSession) -> bool:
+    return _now() - session.last >= SESSION_REFRESH_SECONDS
+
+
+def refresh_session(session: AdminSession) -> AdminSession:
+    return replace(session, last=_now())
+
+
+def session_cookie_header(session: AdminSession, services) -> str | None:
+    response = Response()
+    _set_cookie(response, serialize_session(session, services), services)
+    headers = response.headers.getlist("set-cookie")
+    return headers[-1] if headers else None
+
+
+def deletion_cookie_header() -> str | None:
+    response = Response()
+    response.delete_cookie(COOKIE_NAME, path="/admin")
+    headers = response.headers.getlist("set-cookie")
+    return headers[-1] if headers else None
 
 
 async def require_admin(request: Request, services) -> AdminSession:

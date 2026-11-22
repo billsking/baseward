@@ -61,6 +61,8 @@ DENIED = [
     ("UPDATE users SET name = 'x'", NO_WHERE, False),
     ("DELETE FROM users", NO_WHERE, False),
     ("DELETE FROM users USING users JOIN orders ON orders.user_id = users.id", NO_WHERE, False),
+    ("UPDATE users SET name = 'x' WHERE 1=1", NO_WHERE, False),
+    ("DELETE FROM users WHERE TRUE", NO_WHERE, False),
     ("REPLACE INTO users (id, note) VALUES (1, 'a;b')", UNSUPPORTED_STATEMENT, False),
     ("dRoP /* hidden */ TABLE users", DDL_BLOCKED, True),
     ("select * from users for\nupdate", LOCKING_READ, True),

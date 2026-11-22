@@ -52,7 +52,9 @@ async def test_unauthenticated_and_login_flow(env):
     assert dashboard.status_code == 200
     assert "仪表盘" in dashboard.text
     assert "启用 Token" in dashboard.text
-    assert "暂无审计记录" in dashboard.text
+    # Sign-in attempts are audited, so the earlier failed login already fills the recent list.
+    assert "最近审计" in dashboard.text
+    assert "暂无审计记录" not in dashboard.text
 
     login_page = await env.client.get("/admin/login")
     assert login_page.status_code == 302
@@ -249,7 +251,8 @@ async def test_token_management(env):
     assert "tester" in page.text
 
     created = await env.client.post(
-        "/admin/tokens/new", data={"_csrf": csrf, "user_name": "ui-user"}
+        "/admin/tokens/new",
+        data={"_csrf": csrf, "user_name": "ui-user", "expires_at": "2099-01-01T08:00"},
     )
     assert created.status_code == 200
     assert "新 Token 已创建" in created.text
@@ -269,6 +272,7 @@ async def test_token_management(env):
     row = next(
         item for item in await env.services.tokens.list_all() if item.user_name == "ui-user"
     )
+    assert row.expires_at is not None and row.expires_at.year == 2099
     disabled = await env.client.post(
         f"/admin/tokens/{row.id}/disable", data={"_csrf": csrf}
     )

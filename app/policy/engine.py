@@ -193,8 +193,17 @@ def evaluate(
                 statement_type,
                 database,
             )
-    if isinstance(stmt, (exp.Update, exp.Delete)) and stmt.args.get("where") is None:
-        return _deny(NO_WHERE, "禁止执行无 WHERE 条件的 UPDATE/DELETE", statement_type)
+    if isinstance(stmt, (exp.Update, exp.Delete)):
+        where = stmt.args.get("where")
+        if where is None:
+            return _deny(NO_WHERE, "禁止执行无 WHERE 条件的 UPDATE/DELETE", statement_type)
+        if not where.find(exp.Column):
+            # WHERE 1=1 / WHERE TRUE and similar constant predicates cannot limit the write.
+            return _deny(
+                NO_WHERE,
+                "禁止执行条件恒真的 UPDATE/DELETE：WHERE 必须引用至少一个列",
+                statement_type,
+            )
     return PolicyDecision(
         allowed=True,
         code="",

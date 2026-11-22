@@ -88,7 +88,7 @@ async def test_require_token_missing_headers_denied(env) -> None:
     token, _ = await env.services.tokens.create("bot", actor_policy="require")
     response = await _raw_initialize(env, token)
     assert response.status_code == 403
-    assert response.json() == {"error": "actor_required"}
+    assert response.json()["error"]["code"] == "actor_required"
 
     rows, total = await env.services.audit.query({"user_name": "bot", "status": "denied"})
     assert total == 1
@@ -113,7 +113,7 @@ async def test_require_token_invalid_headers_denied(env, extra_headers) -> None:
     token, _ = await env.services.tokens.create("bot", actor_policy="require")
     response = await _raw_initialize(env, token, extra_headers)
     assert response.status_code == 403
-    assert response.json() == {"error": "actor_invalid"}
+    assert response.json()["error"]["code"] == "actor_invalid"
 
     rows, total = await env.services.audit.query({"user_name": "bot", "status": "denied"})
     assert total == 1
@@ -146,7 +146,7 @@ async def test_policy_switch_enforces_immediately(env) -> None:
 
     response = await _raw_initialize(env, token)
     assert response.status_code == 403
-    assert response.json() == {"error": "actor_required"}
+    assert response.json()["error"]["code"] == "actor_required"
 
     async with mcp_session(env, token=token, extra_headers=_actor_headers()) as session:
         failed, payload = await call_tool(session, "list_datasources", {})

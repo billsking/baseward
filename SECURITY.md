@@ -81,11 +81,11 @@ The entries below list, one by one, the capabilities the **current version genui
 - **Impact**: If the datasource account holds `DROP`/`GRANT`/cross-database privileges, any policy bypass (a parser defect, syntax not covered) lands directly on those real privileges.
 - **Mitigation**: Use an account with only `SELECT/SHOW` for read-only sources; grant DML on the necessary tables only for writable sources; do not connect with a high-privilege account.
 
-### L4. Masking has no full column lineage
+### L4. Masking lineage is limited to parsed query structure
 
-- **Status**: Masking uses a conservative AST-based mapping plus automatic keywords (`app/masking/`); it does not track full column provenance across multiple layers of subqueries/CTEs. When parsing fails, it falls back to the strictest rule or the automatic keywords.
-- **Impact**: Extremely nested SQL may be over-masked (reduced usability) rather than under-masked; but custom rules that depend on column aliases/expressions can still behave differently than expected.
-- **Mitigation**: For sensitive tables, prefer the double safety net of "automatic keywords + manual rules"; regression-test with real SQL before going live.
+- **Status**: Masking follows column lineage through nested derived tables, CTEs, `UNION` branches, aliases and mixed named/`*` projections (`app/masking/engine.py`). It does not parse the internal logic of stored procedures or functions; expressions outside the supported lineage rules still rely on conservative rule merging or automatic keywords.
+- **Impact**: Complex expression semantics can produce unexpected rule selection, and conservative fallback may over-mask. The gateway does not replace controls inside database routines.
+- **Mitigation**: For sensitive tables, prefer the double safety net of "automatic keywords + manual rules"; regression-test with real SQL before going live and keep database privileges least-privileged.
 
 ### L5. No row-level permissions
 
@@ -93,23 +93,23 @@ The entries below list, one by one, the capabilities the **current version genui
 - **Impact**: Table access means access to every row in that table; isolation by tenant or region cannot be expressed at the gateway layer.
 - **Mitigation**: Create views or separate datasource accounts for different groups; implement row-level security on the upstream database where needed.
 
-### L6. One enabled token per user, with no expiry
+### L6. One non-expired enabled token per user, with no automatic rotation
 
-- **Status**: Tokens are stored as SHA-256 hashes and disabling one takes effect immediately; there is no TTL and no automatic rotation.
-- **Impact**: A leaked token stays valid until it is disabled; you cannot issue several tokens for different purposes to the same user in parallel.
-- **Mitigation**: Manage tokens like passwords; disable and recreate immediately on suspected leakage; never write them into the code repository or logs.
+- **Status**: Tokens are stored as SHA-256 hashes and disabling one takes effect immediately. An optional `expires_at` can be set at creation; expired tokens are rejected, and their short and export credentials are rejected as well. The admin list shows expiry and `last_used_at` (writes are coalesced over 60 seconds). Tokens without an expiry remain valid indefinitely, and there is no automatic rotation or multiple concurrently active tokens for one user.
+- **Impact**: A leaked token without an expiry stays valid until it is disabled or deleted; you cannot issue several tokens for different purposes to the same user in parallel.
+- **Mitigation**: Set an expiry appropriate to the token's purpose, manage tokens like passwords, and disable and recreate immediately on suspected leakage; never write them into the code repository or logs.
 
-### L7. No built-in rate limiting or brute-force protection
+### L7. Rate limiting does not cover every authentication path
 
-- **Status**: Admin console login, MCP requests and export connections have no rate limiting and no lockout after failed attempts (there is no rate-limiting implementation in the code).
-- **Impact**: Authentication endpoints can be brute-forced online; a compromised token can query at high frequency and put load on the database.
-- **Mitigation**: Apply IP rate limiting and login protection at the reverse proxy/gateway layer; use the audit fields `duration_ms` and `row_count` for anomaly alerting.
+- **Status**: Admin sign-in is throttled and temporarily locked per username + client IP after repeated failures. MCP has global/per-token concurrency caps and a per-token fixed-window rate limit; the export channel has connection, query and concurrency quotas. There is no separate failed-login lockout for MCP bearer authentication or export MySQL authentication.
+- **Impact**: Those authentication paths can still receive online guessing attempts, and fixed-window MCP limits are not a distributed rate limiter across multiple processes.
+- **Mitigation**: Keep source IP allowlists enabled, apply additional IP rate limiting at the reverse proxy/network layer for internet-adjacent deployments, and use the audit fields `duration_ms` and `row_count` for anomaly alerting.
 
-### L8. No security response headers
+### L8. HSTS depends on deployment configuration
 
-- **Status**: Response headers such as `Content-Security-Policy`, `X-Frame-Options` and `Strict-Transport-Security` are not set.
-- **Impact**: The admin console lacks browser-side defense in depth (a larger surface for clickjacking and inline script injection).
-- **Mitigation**: Inject security response headers centrally at the reverse proxy; expose the admin console only to trusted networks.
+- **Status**: Responses include `Content-Security-Policy` (with a per-request nonce), `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy`; admin HTML also disables caching. `Strict-Transport-Security` is emitted only when `GATEWAY_COOKIE_SECURE=true`, and the gateway itself still provides no TLS listener.
+- **Impact**: Deployments that terminate HTTPS but leave `GATEWAY_COOKIE_SECURE=false` do not receive HSTS from the gateway and cannot safely use Secure admin cookies.
+- **Mitigation**: Terminate TLS at a trusted reverse proxy and set `GATEWAY_COOKIE_SECURE=true`; expose the admin console only to trusted networks.
 
 ### L9. The export password is shown only once
 
@@ -129,11 +129,11 @@ The entries below list, one by one, the capabilities the **current version genui
 - **Impact**: Cross-instance queries have to be aggregated outside the gateway, or you create several datasources and authorize them separately.
 - **Mitigation**: Split datasources per instance; a token can be authorized for several datasources at once.
 
-### L12. Query execution itself has no hard row-count/time limit
+### L12. MCP SELECT has no hard upstream row cap
 
-- **Status**: By current design, SQL execution enforces no row-count or execution-time limit; the MCP channel truncates at result row/byte caps and hands off to an export credential (`GATEWAY_MCP_RESULT_MAX_ROWS`, `GATEWAY_MCP_RESULT_MAX_BYTES`), and the export channel has row, time and concurrency quotas.
-- **Impact**: Large result sets and slow queries hold connections, memory and the event loop; several concurrent slow queries can slow down the whole gateway.
-- **Mitigation**: Set `max_execution_time`/`max_statement_time` on the upstream database; monitor with the audit fields; limit concurrency separately for the export channel.
+- **Status**: MCP statements have a wall-clock timeout (`GATEWAY_MCP_QUERY_TIMEOUT_SECONDS`, default 30 seconds), and oversized UPDATE/DELETE statements are rolled back (`GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS`, default 1000). MCP results are truncated at row/byte caps and can hand off to an export credential (`GATEWAY_MCP_RESULT_MAX_ROWS`, `GATEWAY_MCP_RESULT_MAX_BYTES`); the export channel has row, time and concurrency quotas. The gateway does not inject a `LIMIT` or otherwise cap how many rows a SELECT may process upstream.
+- **Impact**: A large SELECT can still make the upstream database perform substantial work before rows arrive, and write row limits are enforced only after the statement reports its affected-row count. Setting either MCP limit to `0` removes that protection.
+- **Mitigation**: Keep the MCP timeout and write cap enabled, set `max_execution_time`/`max_statement_time` on the upstream database where supported, monitor the audit fields, and retain separate export quotas.
 
 ### L13. Audit records can be purged by an admin
 
@@ -180,7 +180,7 @@ The entries below list, one by one, the capabilities the **current version genui
 
 - **Status**: `POST /api/exchange` accepts any valid actor assertion from the holder of an `exchange` token and mints a short credential bound to that actor (`app/exchange/routes.py`, `app/exchange/service.py`). The exchange token itself is rejected at the MCP edge (`403 exchange_only`) and cannot issue export credentials.
 - **Impact**: Whoever holds the exchange token can impersonate any end user in the audit and obtain that user's short credential. The data reachable is still capped by the exchange token's scope, so this is an audit-integrity and credential-proliferation risk rather than a privilege escalation beyond that scope.
-- **Mitigation**: Each short credential is bound to the exchange caller's source IP and to one actor, inherits a scope snapshot, expires (default 15 minutes, max 60), and is superseded when the same actor exchanges again; expired rows are purged daily. Keep the exchange token on the trusted agent host only, enforce the MCP IP allowlist, and monitor `exchange_issue` volume in the admin audit. Revoking or disabling the exchange token immediately invalidates its outstanding short credentials (`PARENT_TOKEN_DISABLED`).
+- **Mitigation**: Each short credential is bound to the exchange caller's source IP and to one actor, inherits a scope snapshot, expires (default 15 minutes, max 60), and is superseded when the same actor exchanges again; expired rows are purged daily. Keep the exchange token on the trusted agent host only, enforce the MCP IP allowlist, and monitor `exchange_issue` volume in the admin audit. Revoking, disabling or expiring the exchange token immediately invalidates its outstanding short credentials (`PARENT_TOKEN_DISABLED`).
 
 ## 5. Secure deployment baseline
 
@@ -209,8 +209,8 @@ Breaking any of the following behaviors is treated as a security vulnerability:
 
 ## 7. Testing and scanning status
 
-- The repository contains 794 test cases: 537 unit tests (no MySQL required) and 257 integration tests (a dedicated test database required); they cover the policy engine, four-level authorization, masking, fail-closed audit, export credentials, short-credential exchange and the protocol patches.
-- There is currently **no** SAST, dependency vulnerability scanning, fuzzing or penetration test report configured. CI only runs tests; that does not amount to a completed security audit.
+- The repository currently collects 883 test cases: 625 non-integration tests (no MySQL required) and 258 integration tests (a dedicated test database required); they cover the policy engine, four-level authorization, masking, fail-closed audit, export credentials, short-credential exchange and the protocol patches.
+- CI runs `pip-audit --strict` against the runtime requirements generated from `pyproject.toml` and checks that the generated file has not drifted. There is currently **no** SAST, fuzzing or penetration test report configured; tests and dependency scanning do not amount to a completed security audit.
 - The export channel depends on `mysql-mimic==3.0.5` and carries two protocol-layer patches; the related behavior has dedicated tests (see `tests/integration/test_export_*.py`).
 
 ## 8. Disclosure policy

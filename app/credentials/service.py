@@ -296,7 +296,11 @@ class CredentialService:
     ) -> tuple[Principal, DataSource]:
         """Credential -> (Principal, datasource); raises CredentialAuthError when the token or datasource is unavailable."""
         token = await self._token_or_none(credential.token_id)
-        if token is None or not token.enabled:
+        if (
+            token is None
+            or not token.enabled
+            or (token.expires_at is not None and token.expires_at <= utcnow())
+        ):
             raise CredentialAuthError(TOKEN_DISABLED)
         datasource = await self.datasource_for(credential)
         scope = await self._tokens.scope_for(token.id)
@@ -518,7 +522,11 @@ class CredentialService:
 
     async def _token_for_issue(self, token_id: int) -> ApiToken:
         token = await self._token_or_none(token_id)
-        if token is None or not token.enabled:
+        if (
+            token is None
+            or not token.enabled
+            or (token.expires_at is not None and token.expires_at <= utcnow())
+        ):
             raise ValidationError("Token 不存在或已停用")
         if token.actor_policy == "require":
             raise ValidationError(t("error.credential.agent_token_no_export"))

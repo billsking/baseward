@@ -6,6 +6,7 @@ services:
     image: ${APP_IMAGE:-baseward}:${IMAGE_TAG:-latest}
     build:
       context: .
+      target: runtime
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple/}
     # By default the management store is the SQLite file below, so no external database is needed.
@@ -27,8 +28,15 @@ services:
       GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD:-}
       GATEWAY_DB_NAME: ${GATEWAY_DB_NAME:-db_gateway}
       GATEWAY_COOKIE_SECURE: ${GATEWAY_COOKIE_SECURE:-false}
+      GATEWAY_ADMIN_LOGIN_MAX_ATTEMPTS: ${GATEWAY_ADMIN_LOGIN_MAX_ATTEMPTS:-5}
+      GATEWAY_ADMIN_LOGIN_WINDOW_SECONDS: ${GATEWAY_ADMIN_LOGIN_WINDOW_SECONDS:-300}
+      GATEWAY_ADMIN_LOGIN_LOCK_SECONDS: ${GATEWAY_ADMIN_LOGIN_LOCK_SECONDS:-900}
+      GATEWAY_ADMIN_SESSION_IDLE_MINUTES: ${GATEWAY_ADMIN_SESSION_IDLE_MINUTES:-30}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      GATEWAY_LOG_FORMAT: ${GATEWAY_LOG_FORMAT:-text}
+      GATEWAY_METRICS_ENABLED: ${GATEWAY_METRICS_ENABLED:-false}
       GATEWAY_AUDIT_RETENTION_DAYS: ${GATEWAY_AUDIT_RETENTION_DAYS:-180}
+      GATEWAY_AUDIT_REQUIRE_SERVER_BACKEND: ${GATEWAY_AUDIT_REQUIRE_SERVER_BACKEND:-false}
       # v1.4 export channel: the allowlist can be saved on the admin settings page (DB wins); this is only the first-boot bootstrap
       GATEWAY_MYSQL_EXPORT_ENABLED: ${GATEWAY_MYSQL_EXPORT_ENABLED:-false}
       GATEWAY_MYSQL_EXPORT_HOST: ${GATEWAY_MYSQL_EXPORT_HOST:-0.0.0.0}
@@ -45,9 +53,19 @@ services:
       GATEWAY_MCP_LANGUAGE: ${GATEWAY_MCP_LANGUAGE:-zh}
       GATEWAY_MCP_RESULT_MAX_ROWS: ${GATEWAY_MCP_RESULT_MAX_ROWS:-2000}
       GATEWAY_MCP_RESULT_MAX_BYTES: ${GATEWAY_MCP_RESULT_MAX_BYTES:-2000000}
+      GATEWAY_MCP_QUERY_TIMEOUT_SECONDS: ${GATEWAY_MCP_QUERY_TIMEOUT_SECONDS:-30}
+      GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS: ${GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS:-1000}
+      GATEWAY_MCP_MAX_CONCURRENT: ${GATEWAY_MCP_MAX_CONCURRENT:-32}
+      GATEWAY_MCP_MAX_CONCURRENT_PER_TOKEN: ${GATEWAY_MCP_MAX_CONCURRENT_PER_TOKEN:-4}
+      GATEWAY_MCP_RATE_LIMIT_PER_MINUTE: ${GATEWAY_MCP_RATE_LIMIT_PER_MINUTE:-120}
       GATEWAY_MCP_EXPORT_AUTO_ISSUE: ${GATEWAY_MCP_EXPORT_AUTO_ISSUE:-true}
       GATEWAY_MCP_EXPORT_TTL_SECONDS: ${GATEWAY_MCP_EXPORT_TTL_SECONDS:-1800}
       GATEWAY_MCP_EXPORT_MAX_ACTIVE: ${GATEWAY_MCP_EXPORT_MAX_ACTIVE:-3}
+      GATEWAY_DATASOURCE_POOL_SIZE: ${GATEWAY_DATASOURCE_POOL_SIZE:-5}
+      GATEWAY_DATASOURCE_POOL_MAX_OVERFLOW: ${GATEWAY_DATASOURCE_POOL_MAX_OVERFLOW:-5}
+      GATEWAY_DATASOURCE_POOL_RECYCLE_SECONDS: ${GATEWAY_DATASOURCE_POOL_RECYCLE_SECONDS:-3600}
+      GATEWAY_EXCHANGE_TTL_MINUTES: ${GATEWAY_EXCHANGE_TTL_MINUTES:-15}
+      GATEWAY_EXCHANGE_MAX_TTL_MINUTES: ${GATEWAY_EXCHANGE_MAX_TTL_MINUTES:-60}
       # MCP entrypoint source-IP allowlist (DB wins; falls back to this variable when never saved; neither = unrestricted)
       GATEWAY_MCP_ALLOW_CIDRS: ${GATEWAY_MCP_ALLOW_CIDRS:-}
       # Only connections from these proxy networks may use X-Forwarded-For; empty = use the TCP peer address
@@ -62,6 +80,16 @@ services:
       # Keeps the default SQLite management database across container recreation.
       - gateway-data:/data
     restart: unless-stopped
+    init: true
+    # The application only writes to the /data volume and /tmp; everything else is read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
 
 volumes:
   gateway-data:

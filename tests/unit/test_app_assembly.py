@@ -22,10 +22,26 @@ def test_app_assembles_routes_and_mcp_mount() -> None:
     app = create_app(make_settings())
     paths = {getattr(route, "path", None) for route in app.routes}
     assert "/healthz" in paths
+    assert "/readyz" in paths
+    # Metrics stay opt-in so an upgrade never exposes a new endpoint by itself.
+    assert "/metrics" not in paths
     assert "/mcp" in paths
     assert "/" in paths
     # FastAPI 0.159 stores include_router as _IncludedRouter; admin routes are verified through a request smoke test.
     assert any(type(route).__name__ == "_IncludedRouter" for route in app.routes)
+
+
+async def test_metrics_endpoint_is_opt_in() -> None:
+    app = create_app(make_settings().model_copy(update={"metrics_enabled": True}))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "baseward_mcp_active_calls" in response.text
+    # Prometheus samples carry the caller's correlation id back on the response.
+    assert response.headers["x-request-id"]
 
 
 async def test_unauthenticated_admin_returns_401_login_page() -> None:

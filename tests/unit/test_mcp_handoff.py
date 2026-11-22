@@ -113,6 +113,9 @@ class FakeResult:
     def fetchall(self) -> list[tuple]:
         return self._rows
 
+    def scalar(self):
+        return self._rows[0][0] if self._rows else None
+
 
 class FakeEngine:
     def __init__(self, result: FakeResult) -> None:
@@ -129,6 +132,8 @@ class FakeEngine:
 
     async def exec(self, sql: str) -> FakeResult:
         self.executed.append(sql)
+        if "CONNECTION_ID" in sql.upper():
+            return FakeResult(["CONNECTION_ID()"], [(1,)])
         return self._result
 
 
@@ -138,6 +143,9 @@ class _FakeConn:
 
     async def exec_driver_sql(self, sql: str) -> FakeResult:
         return await self._engine.exec(sql)
+
+    async def invalidate(self) -> None:
+        return None
 
 
 class FakeCredentials:

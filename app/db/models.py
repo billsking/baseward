@@ -104,6 +104,8 @@ class ApiToken(Base):
     token_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="access")
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 

@@ -57,6 +57,7 @@ EVENT_LABELS = {
     "exchange": "audit.event.exchange",
     "setting_change": "audit.event.setting_change",
     "policy_change": "audit.event.policy_change",
+    "admin_login": "audit.event.admin_login",
 }
 
 

@@ -43,6 +43,10 @@ ERROR_MESSAGES: dict[str, str] = {
     "hash/null/off 策略不允许指定脱敏模式": "The hash, null, and off strategies do not accept a masking pattern",
     "该列已存在脱敏规则": "A masking rule already exists for this column",
     "脱敏规则不存在": "Masking rule not found",
+    # SQL execution guardrails
+    "禁止执行条件恒真的 UPDATE/DELETE：WHERE 必须引用至少一个列": (
+        "UPDATE/DELETE with an always-true condition is not allowed; WHERE must reference at least one column"
+    ),
     # Tokens
     "Token 不存在": "Token not found",
     "该用户已有启用 Token，请先停用": "This user already has an enabled token; disable it first",

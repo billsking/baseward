@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timezone
-from uuid import uuid4
 
 from mcp.server.fastmcp.exceptions import ToolError
 from sqlglot import exp
@@ -14,8 +14,10 @@ from sqlglot import exp
 from app.credentials.service import CREDENTIAL_ISSUE_DENIED
 from app.datasources import databases
 from app.errors import AuditUnavailableError, ValidationError
+from app.i18n import t
 from app.masking.engine import apply as apply_masking
 from app.mcp import introspect
+from app.observability import new_request_id
 from app.query import pipeline as query_pipeline
 from app.sanitize import error_detail, json_safe
 from app.security.principal import Principal
@@ -41,18 +43,14 @@ HANDOFF_NOTICE = (
 EXPORT_UNAVAILABLE = "EXPORT_UNAVAILABLE"
 REASON_LIMIT = 200
 
+QUERY_TIMEOUT = "QUERY_TIMEOUT"
+WRITE_LIMIT_EXCEEDED = "WRITE_LIMIT_EXCEEDED"
+KILL_TIMEOUT_SECONDS = 5.0
+
 
 def _tool_error(code: str, message: str, request_id: str) -> ToolError:
     payload = {"error": {"code": code, "message": message, "request_id": request_id}}
     return ToolError(json.dumps(payload, ensure_ascii=False))
-
-
-def _elapsed_ms(started: float) -> int:
-    return max(0, int((time.perf_counter() - started) * 1000))
-
-
-_candidate_label = query_pipeline.candidate_label
-_candidate_labels = query_pipeline.candidate_labels
 
 
 async def _get_datasource(
@@ -65,64 +63,23 @@ async def _get_datasource(
     sql_text: str | None,
     started: float,
 ):
-    name = (name or "").strip()
-    if not name:
-        message = "datasource 参数不能为空"
+    """Metadata tools share the SQL path's resolver so name/scope rules never diverge."""
+    try:
+        return await query_pipeline.resolve_datasource(services, principal, name)
+    except query_pipeline.GatewayError as exc:
         await services.audit.record_denied(
-            request_id, "mcp_tool", principal, None, tool, sql_text, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            request_id,
+            "mcp_tool",
+            principal,
+            exc.datasource,
+            tool,
+            sql_text,
+            client_ip,
+            exc.code,
+            exc.message,
+            query_pipeline.elapsed_ms(started),
         )
-        raise _tool_error("INVALID_ARGUMENT", message, request_id)
-
-    datasource = await services.datasources.get_by_name(name)
-    if datasource is None:
-        try:
-            candidates = [
-                item
-                for item in await services.datasources.list_all()
-                if principal.scope.allows_datasource(item.id)
-            ]
-        except Exception:  # noqa: BLE001 - used only for hints, must not block the denial response
-            candidates = []
-        datasource, ambiguous = introspect.resolve_alias(name, candidates)
-        if ambiguous:
-            message = (
-                f"数据源名称有歧义：{name}；候选：{_candidate_labels(ambiguous)}"
-                "。请改用精确名称"
-            )
-            await services.audit.record_denied(
-                request_id, "mcp_tool", principal, None, tool, sql_text, client_ip,
-                "DATASOURCE_AMBIGUOUS", message, _elapsed_ms(started),
-            )
-            raise _tool_error("DATASOURCE_AMBIGUOUS", message, request_id)
-        if datasource is None:
-            available = _candidate_labels(candidates)
-            message = f"数据源不存在：{name}"
-            if available:
-                message += f"；可用数据源：{available}"
-            await services.audit.record_denied(
-                request_id, "mcp_tool", principal, None, tool, sql_text, client_ip,
-                "DATASOURCE_NOT_FOUND", message, _elapsed_ms(started),
-            )
-            raise _tool_error("DATASOURCE_NOT_FOUND", message, request_id)
-
-    if not datasource.enabled:
-        message = f"数据源已停用：{datasource.name}"
-        await services.audit.record_denied(
-            request_id, "mcp_tool", principal, datasource, tool, sql_text, client_ip,
-            "DATASOURCE_DISABLED", message, _elapsed_ms(started),
-        )
-        raise _tool_error("DATASOURCE_DISABLED", message, request_id)
-
-    if not principal.scope.allows_datasource(datasource.id):
-        message = f"当前 Token 无权访问数据源：{datasource.name}"
-        await services.audit.record_denied(
-            request_id, "mcp_tool", principal, datasource, tool, sql_text, client_ip,
-            "DATASOURCE_DENIED", message, _elapsed_ms(started),
-        )
-        raise _tool_error("DATASOURCE_DENIED", message, request_id)
-
-    return datasource
+        raise _tool_error(exc.code, exc.message, request_id) from exc
 
 
 async def _start_audit(
@@ -151,10 +108,6 @@ async def _start_audit(
         raise _tool_error("AUDIT_UNAVAILABLE", "审计服务不可用，查询已阻断", request_id) from exc
 
 
-def _map_exception(exc: BaseException, request_id: str) -> tuple[str, str]:
-    return query_pipeline.map_exception(exc, request_id)
-
-
 def _literal_sql(statement: str) -> str:
     """exec_driver_sql hands the DBAPI an empty tuple even without bound parameters, and
     aiomysql then runs "%" formatting over the statement; literal percent signs must be doubled."""
@@ -167,6 +120,45 @@ def _mysql_errno(exc: BaseException) -> int | None:
     if args and isinstance(args[0], int):
         return args[0]
     return None
+
+
+class _WriteLimitExceeded(Exception):
+    """Raised inside the transaction so that engine.begin() rolls the write back."""
+
+    def __init__(self, rows: int, limit: int) -> None:
+        super().__init__("write affected rows over limit")
+        self.rows = rows
+        self.limit = limit
+
+
+def _query_timeout(services) -> float | None:
+    seconds = services.settings.mcp_query_timeout_seconds
+    return seconds if seconds and seconds > 0 else None
+
+
+async def _connection_id(conn) -> int | None:
+    value = (await conn.exec_driver_sql("SELECT CONNECTION_ID()")).scalar()
+    return int(value) if value is not None else None
+
+
+async def _kill_query(engine, thread_id: int | None) -> None:
+    """Abort the upstream statement from another connection; best-effort, never raises."""
+    if thread_id is None:
+        return
+    try:
+        async with asyncio.timeout(KILL_TIMEOUT_SECONDS):
+            async with engine.connect() as killer:
+                await killer.exec_driver_sql(f"KILL QUERY {int(thread_id)}")
+    except Exception:  # noqa: BLE001 - a failed abort must not hide the timeout
+        logger.warning("MCP 查询超时后 KILL QUERY 失败 thread_id=%s", thread_id)
+
+
+async def _invalidate(conn) -> None:
+    """Discard a cancelled connection so the pool never reuses it with pending results."""
+    try:
+        await conn.invalidate()
+    except Exception:  # noqa: BLE001 - invalidation is best-effort
+        logger.warning("MCP 查询超时后连接回收失败")
 
 
 def _first_unqualified_table(ast) -> str | None:
@@ -218,7 +210,7 @@ async def _database_denial(
         client_ip,
         code,
         message,
-        _elapsed_ms(started),
+        query_pipeline.elapsed_ms(started),
         database_name=database,
     )
     raise _tool_error(code, message, request_id)
@@ -232,7 +224,7 @@ async def execute_sql(
     sql: str,
     database: str | None = None,
 ) -> dict:
-    request_id = str(uuid4())
+    request_id = new_request_id()
     started = time.perf_counter()
 
     try:
@@ -260,25 +252,50 @@ async def execute_sql(
 async def _execute_write(services, prepared: query_pipeline.PreparedRead) -> dict:
     request_id = prepared.request_id
     query_started = time.perf_counter()
+    timeout = _query_timeout(services)
+    limit = services.settings.mcp_write_max_affected_rows
+    row_count = 0
     try:
         engine = await services.pool.get(prepared.datasource)
         async with engine.begin() as conn:
-            await conn.exec_driver_sql(
-                _literal_sql(databases.use_statement(prepared.database))
-            )
-            result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
-            row_count = max(int(result.rowcount or 0), 0)
-            duration = _elapsed_ms(query_started)
+            thread_id = None
+            try:
+                async with asyncio.timeout(timeout):
+                    await conn.exec_driver_sql(
+                        _literal_sql(databases.use_statement(prepared.database))
+                    )
+                    thread_id = await _connection_id(conn)
+                    result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
+                    row_count = max(int(result.rowcount or 0), 0)
+                    if limit and row_count > limit:
+                        raise _WriteLimitExceeded(row_count, limit)
+            except TimeoutError:
+                await _kill_query(engine, thread_id)
+                await _invalidate(conn)
+                raise
+            duration = query_pipeline.elapsed_ms(query_started)
             await services.audit.mark_success(request_id, duration, row_count)
+    except _WriteLimitExceeded as exc:
+        message = t("mcp.write_limit_exceeded", rows=exc.rows, limit=exc.limit)
+        await services.audit.mark_error_best_effort(
+            request_id, WRITE_LIMIT_EXCEEDED, message, query_pipeline.elapsed_ms(query_started)
+        )
+        raise _tool_error(WRITE_LIMIT_EXCEEDED, message, request_id) from exc
+    except TimeoutError as exc:
+        message = t("mcp.query_timeout", seconds=timeout)
+        await services.audit.mark_error_best_effort(
+            request_id, QUERY_TIMEOUT, message, query_pipeline.elapsed_ms(query_started)
+        )
+        raise _tool_error(QUERY_TIMEOUT, message, request_id) from exc
     except AuditUnavailableError as exc:
         await services.audit.mark_error_best_effort(
-            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", _elapsed_ms(query_started)
+            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error("AUDIT_UNAVAILABLE", "审计服务不可用，查询已阻断", request_id) from exc
     except Exception as exc:  # noqa: BLE001
-        code, message = _map_exception(exc, request_id)
+        code, message = query_pipeline.map_exception(exc, request_id)
         await services.audit.mark_error_best_effort(
-            request_id, code, error_detail(exc), _elapsed_ms(query_started)
+            request_id, code, error_detail(exc), query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error(code, message, request_id) from exc
     return {
@@ -416,7 +433,7 @@ async def issue_export_credential(
     database: str | None = None,
 ) -> dict:
     """Explicitly issue an export credential after prechecking authorization against the SQL; the Agent then fetches over the MySQL protocol."""
-    request_id = str(uuid4())
+    request_id = new_request_id()
     started = time.perf_counter()
     settings = services.settings
 
@@ -431,7 +448,7 @@ async def issue_export_credential(
             client_ip,
             code,
             message,
-            _elapsed_ms(started),
+            query_pipeline.elapsed_ms(started),
         )
 
     if not settings.mysql_export_enabled:
@@ -574,15 +591,24 @@ async def _execute_read(
 ) -> dict:
     request_id = prepared.request_id
     truncated_reason: str | None = None
+    timeout = _query_timeout(services)
     try:
         engine = await services.pool.get(prepared.datasource)
         async with engine.connect() as conn:
-            await conn.exec_driver_sql(
-                _literal_sql(databases.use_statement(prepared.database))
-            )
-            result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
-            columns = list(result.keys())
-            raw_rows = result.fetchall()
+            thread_id = None
+            try:
+                async with asyncio.timeout(timeout):
+                    await conn.exec_driver_sql(
+                        _literal_sql(databases.use_statement(prepared.database))
+                    )
+                    thread_id = await _connection_id(conn)
+                    result = await conn.exec_driver_sql(_literal_sql(prepared.exec_sql))
+                    columns = list(result.keys())
+                    raw_rows = result.fetchall()
+            except TimeoutError:
+                await _kill_query(engine, thread_id)
+                await _invalidate(conn)
+                raise
         if prepared.row_cap and len(raw_rows) > prepared.row_cap:
             # The extra row fetched at the SQL layer is used only to detect truncation and is not returned to the client.
             raw_rows = raw_rows[: prepared.row_cap]
@@ -599,8 +625,12 @@ async def _execute_read(
         )
     except query_pipeline.GatewayError as exc:
         raise _tool_error(exc.code, exc.message, request_id) from exc
+    except TimeoutError as exc:
+        message = t("mcp.query_timeout", seconds=timeout)
+        await query_pipeline.conclude_error(services, prepared, exc, QUERY_TIMEOUT)
+        raise _tool_error(QUERY_TIMEOUT, message, request_id) from exc
     except Exception as exc:  # noqa: BLE001
-        code, message = _map_exception(exc, request_id)
+        code, message = query_pipeline.map_exception(exc, request_id)
         await query_pipeline.conclude_error(services, prepared, exc, code)
         if _mysql_errno(exc) == 1146:
             table_name = _first_unqualified_table(prepared.decision.ast)
@@ -683,7 +713,7 @@ async def search_objects(
     object_type: str = "all",
     database: str | None = None,
 ) -> dict:
-    request_id = str(uuid4())
+    request_id = new_request_id()
     started = time.perf_counter()
 
     pattern = (pattern or "").strip()
@@ -693,21 +723,21 @@ async def search_objects(
         message = f"pattern 不能为空且长度不超过 {PATTERN_LIMIT}"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "search_objects", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
     if object_type not in OBJECT_TYPES:
         message = "object_type 必须是 all/table/column 之一"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "search_objects", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
     if database and len(database) > DATABASE_LIMIT:
         message = f"database 长度不能超过 {DATABASE_LIMIT}"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "search_objects", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
 
@@ -816,17 +846,17 @@ async def search_objects(
             truncated = True
             objects = objects[:RESULT_LIMIT]
         payload_objects = [item[1] for item in objects]
-        duration = _elapsed_ms(query_started)
+        duration = query_pipeline.elapsed_ms(query_started)
         await services.audit.mark_success(request_id, duration, len(objects))
     except AuditUnavailableError as exc:
         await services.audit.mark_error_best_effort(
-            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", _elapsed_ms(query_started)
+            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error("AUDIT_UNAVAILABLE", "审计服务不可用，查询已阻断", request_id) from exc
     except Exception as exc:  # noqa: BLE001
-        code, message = _map_exception(exc, request_id)
+        code, message = query_pipeline.map_exception(exc, request_id)
         await services.audit.mark_error_best_effort(
-            request_id, code, error_detail(exc), _elapsed_ms(query_started)
+            request_id, code, error_detail(exc), query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error(code, message, request_id) from exc
 
@@ -848,7 +878,7 @@ async def list_datasources(
     principal: Principal,
     client_ip: str,
 ) -> dict:
-    request_id = str(uuid4())
+    request_id = new_request_id()
     await _start_audit(
         services, request_id, principal, None, "list_datasources", None, client_ip
     )
@@ -876,17 +906,17 @@ async def list_datasources(
                     ],
                 }
             )
-        duration = _elapsed_ms(query_started)
+        duration = query_pipeline.elapsed_ms(query_started)
         await services.audit.mark_success(request_id, duration, len(items))
     except AuditUnavailableError as exc:
         await services.audit.mark_error_best_effort(
-            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", _elapsed_ms(query_started)
+            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error("AUDIT_UNAVAILABLE", "审计服务不可用，查询已阻断", request_id) from exc
     except Exception as exc:  # noqa: BLE001
-        code, message = _map_exception(exc, request_id)
+        code, message = query_pipeline.map_exception(exc, request_id)
         await services.audit.mark_error_best_effort(
-            request_id, code, error_detail(exc), _elapsed_ms(query_started)
+            request_id, code, error_detail(exc), query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error(code, message, request_id) from exc
 
@@ -907,7 +937,7 @@ async def describe_datasource(
     include_columns: bool = True,
     limit: int = 50,
 ) -> dict:
-    request_id = str(uuid4())
+    request_id = new_request_id()
     started = time.perf_counter()
 
     pattern = (pattern or "").strip()
@@ -916,21 +946,21 @@ async def describe_datasource(
         message = f"pattern 长度不能超过 {PATTERN_LIMIT}"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "describe_datasource", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
     if database and len(database) > DATABASE_LIMIT:
         message = f"database 长度不能超过 {DATABASE_LIMIT}"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "describe_datasource", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
     if not 1 <= limit <= DESCRIBE_LIMIT_MAX:
         message = f"limit 必须在 1-{DESCRIBE_LIMIT_MAX} 之间"
         await services.audit.record_denied(
             request_id, "mcp_tool", principal, None, "describe_datasource", None, client_ip,
-            "INVALID_ARGUMENT", message, _elapsed_ms(started),
+            "INVALID_ARGUMENT", message, query_pipeline.elapsed_ms(started),
         )
         raise _tool_error("INVALID_ARGUMENT", message, request_id)
 
@@ -1068,17 +1098,17 @@ async def describe_datasource(
                     item["columns"] = buckets.get(
                         (item["database"], item["table"]), []
                     )
-        duration = _elapsed_ms(query_started)
+        duration = query_pipeline.elapsed_ms(query_started)
         await services.audit.mark_success(request_id, duration, len(tables))
     except AuditUnavailableError as exc:
         await services.audit.mark_error_best_effort(
-            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", _elapsed_ms(query_started)
+            request_id, "AUDIT_UNAVAILABLE", "审计结果更新失败", query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error("AUDIT_UNAVAILABLE", "审计服务不可用，查询已阻断", request_id) from exc
     except Exception as exc:  # noqa: BLE001
-        code, message = _map_exception(exc, request_id)
+        code, message = query_pipeline.map_exception(exc, request_id)
         await services.audit.mark_error_best_effort(
-            request_id, code, error_detail(exc), _elapsed_ms(query_started)
+            request_id, code, error_detail(exc), query_pipeline.elapsed_ms(query_started)
         )
         raise _tool_error(code, message, request_id) from exc
 

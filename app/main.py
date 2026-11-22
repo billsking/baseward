@@ -7,10 +7,11 @@ import gc
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import CONTENT_TYPE_LATEST
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.admin.rendering import BASE_DIR, render_error, render_login
@@ -24,6 +25,10 @@ from app.i18n import t, translate_error
 from app.i18n.middleware import LocaleMiddleware
 from app.logging_setup import configure_logging
 from app.mcp.server import build_mcp
+from app.metrics import Metrics, MetricsMiddleware
+from app.observability import RequestContextMiddleware
+from app.security.admin_session import AdminSessionRefreshMiddleware
+from app.security.headers import SecurityHeadersMiddleware
 from app.security.mcp_auth import BearerAuthMiddleware
 from app.services import Services
 
@@ -44,12 +49,23 @@ class _McpPathNormalizer:
         await self.app(scope, receive, send)
 
 
+async def _management_db_ready(services: Services) -> bool:
+    try:
+        async with asyncio.timeout(2):
+            async with services.engine.connect() as conn:
+                await conn.exec_driver_sql("SELECT 1")
+    except Exception:  # noqa: BLE001 - readiness reports any failure as "not ready"
+        return False
+    return True
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or load_settings()
-    configure_logging(resolved.log_level)
+    configure_logging(resolved.log_level, resolved.log_format)
 
     services = Services(resolved)
-    mcp = build_mcp(services)
+    metrics = Metrics(services) if resolved.metrics_enabled else None
+    mcp = build_mcp(services, metrics)
     # Must run before mounting: session_manager is created lazily and raises RuntimeError afterwards.
     mcp_app = mcp.streamable_http_app()
     export_server = None
@@ -58,6 +74,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         nonlocal export_server
         logger.info("管理库后端：%s", resolved.management_summary)
+        if resolved.management_backend == "sqlite":
+            logger.warning(
+                "管理库使用 SQLite：审计为 fail-closed，单写者在高并发或锁等待时可能阻断查询；"
+                "生产环境建议改用 MySQL/PostgreSQL，并可设置 "
+                "GATEWAY_AUDIT_REQUIRE_SERVER_BACKEND=true 强制校验"
+            )
         # A local SQLite file has no network transient to wait out; fail fast on a bad path.
         attempts = 1 if resolved.management_backend == "sqlite" else 30
         await wait_for_db(services.engine, attempts=attempts)
@@ -102,9 +124,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="BaseWard", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.add_middleware(_McpPathNormalizer)
     app.add_middleware(LocaleMiddleware, mcp_language=resolved.mcp_language)
+    if metrics is not None:
+        app.add_middleware(MetricsMiddleware, metrics=metrics)
+    # HSTS is only safe once the deployment is known to serve HTTPS (cookie_secure implies that).
+    app.add_middleware(SecurityHeadersMiddleware, hsts=resolved.cookie_secure)
+    # Slides the admin session's idle timer; non-/admin traffic passes straight through.
+    app.add_middleware(AdminSessionRefreshMiddleware, services=services)
+    # Added last so it is the outermost middleware: every inner log record sees the request id.
+    app.add_middleware(RequestContextMiddleware)
     app.state.settings = resolved
     app.state.services = services
     app.state.export_server = None
+    app.state.metrics = metrics
 
     @app.get("/")
     async def root() -> RedirectResponse:
@@ -124,16 +155,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "allowlist_source": allow.source,
             "allowlist_entries": len(allow.entries),
         }
-        try:
-            async with asyncio.timeout(2):
-                async with services.engine.connect() as conn:
-                    await conn.exec_driver_sql("SELECT 1")
-        except Exception as exc:  # noqa: BLE001 - health check catches every exception
-            logger.warning("健康检查失败：%s", exc)
+        if not await _management_db_ready(services):
+            logger.warning("健康检查失败：管理库不可用")
             return JSONResponse(
                 {"status": "unavailable", "mysql_export": export_status}, status_code=503
             )
         return JSONResponse({"status": "ok", "mysql_export": export_status})
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        """Readiness only: is this instance able to serve traffic, regardless of its export listener."""
+        ready = await _management_db_ready(services)
+        return JSONResponse(
+            {
+                "status": "ok" if ready else "unavailable",
+                "checks": {"management_db": "ok" if ready else "unavailable"},
+                "management_backend": resolved.management_backend,
+            },
+            status_code=200 if ready else 503,
+        )
+
+    if metrics is not None:
+
+        @app.get("/metrics")
+        async def prometheus_metrics() -> Response:
+            return Response(
+                content=metrics.render(), headers={"Content-Type": CONTENT_TYPE_LATEST}
+            )
 
     app.mount("/mcp", BearerAuthMiddleware(mcp_app, services))
     app.mount(

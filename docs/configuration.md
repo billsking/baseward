@@ -14,10 +14,19 @@
 | `GATEWAY_DB_USER` | No | — | Management database account |
 | `GATEWAY_DB_PASSWORD` | No | — | Management database password |
 | `GATEWAY_DB_NAME` | No | `db_gateway` | Management database name |
-| `GATEWAY_COOKIE_SECURE` | No | `false` | Set to `true` under HTTPS |
+| `GATEWAY_COOKIE_SECURE` | No | `false` | Set to `true` under HTTPS; this also enables the `Strict-Transport-Security` response header |
+| `GATEWAY_ADMIN_LOGIN_MAX_ATTEMPTS` | No | `5` | Failed admin sign-ins for one username+client-IP inside the window before that pair is locked (1-100) |
+| `GATEWAY_ADMIN_LOGIN_WINDOW_SECONDS` | No | `300` | Failure-counting window for admin sign-in (10-86400) |
+| `GATEWAY_ADMIN_LOGIN_LOCK_SECONDS` | No | `900` | Temporary lock duration after too many failed admin sign-ins (10-86400); counters are per process, so multiple workers throttle independently |
+| `GATEWAY_ADMIN_SESSION_IDLE_MINUTES` | No | `30` | Idle timeout for the admin session cookie (1-1440); activity slides it, and the absolute lifetime stays 8 hours |
 | `GATEWAY_LOG_LEVEL` | No | `INFO` | Log level |
+| `GATEWAY_LOG_FORMAT` | No | `text` | `text` keeps the human-readable format; `json` emits one JSON object per line for application loggers with `ts`, `level`, `logger`, `message`, `request_id` (uvicorn's own startup/access lines stay plain text) |
+| `GATEWAY_METRICS_ENABLED` | No | `false` | Serve Prometheus metrics at `/metrics` (HTTP, MCP tool calls, in-flight calls, pool occupancy); disabled means the route does not exist |
 | `GATEWAY_AUDIT_RETENTION_DAYS` | No | `180` | Default retention days when the database is first created (1-3650) |
+| `GATEWAY_AUDIT_REQUIRE_SERVER_BACKEND` | No | `false` | When `true`, refuse to start if the management store is SQLite. Recommended for production because audit writes are fail-closed and SQLite serializes writers |
 | `GATEWAY_HOST` / `GATEWAY_PORT` | No | `0.0.0.0` / `8080` | In-code settings; Compose uses `GATEWAY_PORT` to map the host port |
+| `GATEWAY_DATASOURCE_POOL_SIZE` / `_MAX_OVERFLOW` | No | `5` / `5` | Connection pool sizing for each business datasource engine (1-200 / 0-200); the worst case per datasource is size + overflow |
+| `GATEWAY_DATASOURCE_POOL_RECYCLE_SECONDS` | No | `3600` | Recycle pooled business connections older than this many seconds (0-86400); `0` means never recycle |
 | `GATEWAY_MYSQL_EXPORT_ENABLED` | No | `false` | Enable the MySQL export channel ([short-lived export credentials](export-credential.md)); when disabled it does not listen and does not load the protocol layer |
 | `GATEWAY_MYSQL_EXPORT_HOST` / `_PORT` | No | `0.0.0.0` / `3307` | Listen address/port inside the container; the port must not be the same as `GATEWAY_PORT` |
 | `GATEWAY_MYSQL_EXPORT_ALLOW_CIDRS` | No | empty | The **initial bootstrap value** of the export channel's source allowlist; once saved on the settings page the DB wins ([source IP allowlist](admin-ui.md#51-source-ip-allowlist)). Empty on both sides = deny all export connections, while the process still starts as normal |
@@ -30,6 +39,11 @@
 | `GATEWAY_MCP_LANGUAGE` | No | `zh` | Language of the MCP instructions and tool descriptions, `zh` or `en`; the admin console language follows the browser/cookie and is not affected by this setting |
 | `GATEWAY_MCP_RESULT_MAX_ROWS` | No | `2000` | Soft cap on the rows MCP `execute_sql` returns to the AI, `0` = unlimited (6.6) |
 | `GATEWAY_MCP_RESULT_MAX_BYTES` | No | `2000000` | Cap on the JSON-serialized UTF-8 bytes of an MCP result, `0` = unlimited |
+| `GATEWAY_MCP_QUERY_TIMEOUT_SECONDS` | No | `30` | Wall-clock limit for one MCP SQL statement (0-3600, `0` = no timeout); on expiry the statement is killed upstream and the connection is discarded |
+| `GATEWAY_MCP_WRITE_MAX_AFFECTED_ROWS` | No | `1000` | An UPDATE/DELETE affecting more rows is rolled back and reported as `WRITE_LIMIT_EXCEEDED`; `0` = unlimited |
+| `GATEWAY_MCP_MAX_CONCURRENT` | No | `32` | Cap on in-flight MCP tool calls across the gateway (1-1000); calls over the cap are rejected immediately with `TOO_MANY_CONCURRENT`, never queued |
+| `GATEWAY_MCP_MAX_CONCURRENT_PER_TOKEN` | No | `4` | Cap on in-flight MCP tool calls per token (0-1000); `0` leaves only the gateway-wide cap |
+| `GATEWAY_MCP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-token tool-call budget per fixed 60-second window (0-100000); over-budget calls return `RATE_LIMITED`; `0` disables it |
 | `GATEWAY_MCP_EXPORT_AUTO_ISSUE` | No | `true` | Automatically issue a short-lived export credential when a result exceeds the limits; has no effect when the export channel is not enabled |
 | `GATEWAY_MCP_EXPORT_TTL_SECONDS` | No | `1800` | Lifetime of auto-issued credentials (seconds, 60-86400); must not exceed `MYSQL_EXPORT_MAX_TTL_HOURS * 3600` |
 | `GATEWAY_MCP_EXPORT_MAX_ACTIVE` | No | `3` | Cap on in-flight auto credentials for the same token + datasource; when exceeded, the oldest auto credential is revoked first; manually issued credentials are unaffected |

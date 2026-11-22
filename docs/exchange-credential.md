@@ -49,10 +49,16 @@ The plaintext appears only in this response; the store keeps a SHA-256 digest.
 
 ### Error codes
 
-| HTTP | body `error` | Audit deny_reason | Trigger |
+Errors use the same envelope as MCP authentication and tool errors, and `request_id` matches the response's `X-Request-ID` header:
+
+```json
+{"error": {"code": "invalid_token", "message": "...", "request_id": "..."}}
+```
+
+| HTTP | body `error.code` | Audit deny_reason | Trigger |
 |---|---|---|---|
 | 403 | `ip_not_allowed` | `IP_NOT_ALLOWED` | Source outside the MCP allowlist |
-| 401 | `missing_token` / `invalid_token` | `AUTH_INVALID` | Missing/malformed Bearer, unknown or disabled token |
+| 401 | `missing_token` / `invalid_token` | `AUTH_INVALID` | Missing/malformed Bearer, unknown, disabled or expired token |
 | 403 | `exchange_token_required` | `EXCHANGE_TOKEN_REQUIRED` | An access token or short credential was used to exchange |
 | 403 | `actor_required` | `ACTOR_REQUIRED` | No identity headers at all |
 | 403 | `actor_invalid` | `ACTOR_INVALID` | Incomplete or malformed identity headers |
@@ -77,7 +83,7 @@ Invalid credentials always return `401 invalid_token`; the audit distinguishes t
 | `SHORT_CREDENTIAL_EXPIRED` | Past its expiry |
 | `SHORT_CREDENTIAL_REVOKED` | Revoked (including superseded by a newer credential) |
 | `SHORT_CREDENTIAL_IP_MISMATCH` | Source IP differs from the exchange caller |
-| `PARENT_TOKEN_DISABLED` | The parent exchange token was disabled or deleted |
+| `PARENT_TOKEN_DISABLED` | The parent exchange token was disabled, deleted or expired |
 
 Clients (the bridge plugin) should re-exchange on 401 rather than retry the same credential.
 

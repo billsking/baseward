@@ -40,6 +40,10 @@
           <option value="require" {% if values and values.actor_policy == 'require' %}selected{% endif %}>{{ t("form.actor_policy.require") }}</option>
         </select>
       </label>
+      <label class="field">
+        <span>{{ t("token.expires_at") }}</span>
+        <input type="datetime-local" name="expires_at" value="{{ values.expires_at if values else '' }}">
+      </label>
       <div class="form-actions align-end">
         <button type="submit" class="btn btn-primary">{{ t("common.create") }}</button>
       </div>
@@ -47,6 +51,7 @@
     {% set scope_default_mode = 'specified' %}
     {% include "_scope_picker.html" %}
     <p class="muted">{{ t("token.one_enabled_hint") }}</p>
+    <p class="muted">{{ t("token.expires_hint") }}</p>
     <p class="muted">{{ t("token.exchange_hint") }}</p>
   </form>
 </section>
@@ -59,7 +64,7 @@
   <div class="table-wrap">
     <table class="table">
       <thead>
-        <tr><th>{{ t("common.user") }}</th><th>{{ t("token.table.prefix") }}</th><th>{{ t("form.token_kind") }}</th><th>{{ t("token.table.scope") }}</th><th>{{ t("column.actor_policy") }}</th><th>{{ t("common.status") }}</th><th>{{ t("token.table.created") }}</th><th>{{ t("token.table.disabled") }}</th><th class="right">{{ t("common.actions") }}</th></tr>
+        <tr><th>{{ t("common.user") }}</th><th>{{ t("token.table.prefix") }}</th><th>{{ t("form.token_kind") }}</th><th>{{ t("token.table.scope") }}</th><th>{{ t("column.actor_policy") }}</th><th>{{ t("common.status") }}</th><th>{{ t("token.table.created") }}</th><th>{{ t("token.table.expires") }}</th><th>{{ t("token.table.last_used") }}</th><th>{{ t("token.table.disabled") }}</th><th class="right">{{ t("common.actions") }}</th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
@@ -83,9 +88,11 @@
             {% if row.actor_policy == 'require' %}<span class="badge badge-readonly">{{ t("form.actor_policy.require") }}</span>{% else %}<span class="badge badge-disabled">{{ t("form.actor_policy.ignore") }}</span>{% endif %}
           </td>
           <td>
-            {% if row.enabled %}<span class="badge badge-success">{{ t("common.enabled") }}</span>{% else %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
+            {% if row.enabled and (not row.expires_at or row.expires_at > now) %}<span class="badge badge-success">{{ t("common.enabled") }}</span>{% elif row.enabled %}<span class="badge badge-disabled">{{ t("token.status_expired") }}</span>{% else %}<span class="badge badge-disabled">{{ t("common.disabled") }}</span>{% endif %}
           </td>
           <td class="mono">{{ row.created_at|dt }}</td>
+          <td class="mono">{{ row.expires_at|dt or '—' }}</td>
+          <td class="mono">{{ row.last_used_at|dt or '—' }}</td>
           <td class="mono">{{ row.disabled_at|dt or '—' }}</td>
           <td class="right actions">
             <a class="btn btn-small btn-secondary" href="/admin/tokens/{{ row.id }}/edit">{{ t("token.grant") }}</a>

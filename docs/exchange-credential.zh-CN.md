@@ -49,10 +49,16 @@ Content-Type: application/json
 
 ### 错误码
 
-| HTTP | body `error` | 审计 deny_reason | 触发 |
+错误与 MCP 鉴权、工具错误使用相同响应结构，`request_id` 与响应头 `X-Request-ID` 一致：
+
+```json
+{"error": {"code": "invalid_token", "message": "...", "request_id": "..."}}
+```
+
+| HTTP | body `error.code` | 审计 deny_reason | 触发 |
 |---|---|---|---|
 | 403 | `ip_not_allowed` | `IP_NOT_ALLOWED` | 来源不在 MCP 白名单 |
-| 401 | `missing_token` / `invalid_token` | `AUTH_INVALID` | 缺 Bearer、格式错、令牌无效或已停用 |
+| 401 | `missing_token` / `invalid_token` | `AUTH_INVALID` | 缺 Bearer、格式错、令牌无效、已停用或已过期 |
 | 403 | `exchange_token_required` | `EXCHANGE_TOKEN_REQUIRED` | 用了常规令牌或短期凭证来换发 |
 | 403 | `actor_required` | `ACTOR_REQUIRED` | 完全未携带身份头 |
 | 403 | `actor_invalid` | `ACTOR_INVALID` | 身份头不完整/非法 |
@@ -77,7 +83,7 @@ Authorization: Bearer sc_<短期凭证>
 | `SHORT_CREDENTIAL_EXPIRED` | 已过期 |
 | `SHORT_CREDENTIAL_REVOKED` | 已吊销（含被新凭证取代） |
 | `SHORT_CREDENTIAL_IP_MISMATCH` | 来源 IP 与换发时不一致 |
-| `PARENT_TOKEN_DISABLED` | 所属换发令牌已停用或删除 |
+| `PARENT_TOKEN_DISABLED` | 所属换发令牌已停用、删除或过期 |
 
 客户端（桥插件）遇到 401 应重新换发，而不是重试同一凭证。
 

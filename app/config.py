@@ -79,10 +79,29 @@ class Settings(BaseSettings):
     db_path: str | None = None
 
     cookie_secure: bool = False
+    # Admin sign-in brute-force guard: failures per username+client-IP inside the window
+    # lock that pair for lock_seconds. State is process-local.
+    admin_login_max_attempts: int = Field(default=5, ge=1, le=100)
+    admin_login_window_seconds: int = Field(default=300, ge=10, le=86400)
+    admin_login_lock_seconds: int = Field(default=900, ge=10, le=86400)
+    # Admin session cookie slides while used; this caps how long an abandoned session survives.
+    admin_session_idle_minutes: int = Field(default=30, ge=1, le=1440)
     log_level: str = "INFO"
+    # text keeps the human-readable format; json emits one object per line for log shippers.
+    log_format: str = "text"
+    # Prometheus /metrics stays off by default so upgrading never exposes a new endpoint.
+    metrics_enabled: bool = False
     audit_retention_days: int = Field(default=180, ge=RETENTION_MIN_DAYS, le=RETENTION_MAX_DAYS)
+    # Refuse to start when the management store (and therefore the fail-closed audit log) is SQLite.
+    audit_require_server_backend: bool = False
     host: str = "0.0.0.0"
     port: int = 8080
+
+    # Business datasource pool: every datasource owns one engine with this sizing.
+    datasource_pool_size: int = Field(default=5, ge=1, le=200)
+    datasource_pool_max_overflow: int = Field(default=5, ge=0, le=200)
+    # 0 disables pool recycling.
+    datasource_pool_recycle_seconds: int = Field(default=3600, ge=0, le=86400)
 
     mysql_export_enabled: bool = False
     mysql_export_host: str = "0.0.0.0"
@@ -102,6 +121,15 @@ class Settings(BaseSettings):
     mcp_language: str = "zh"
     mcp_result_max_rows: int = Field(default=2000, ge=0, le=10_000_000)
     mcp_result_max_bytes: int = Field(default=2_000_000, ge=0, le=1_000_000_000)
+    # Wall-clock budget for one MCP SQL statement; 0 disables the client-side timeout.
+    mcp_query_timeout_seconds: float = Field(default=30.0, ge=0, le=3600)
+    # UPDATE/DELETE affecting more rows than this are rolled back; 0 disables the cap.
+    mcp_write_max_affected_rows: int = Field(default=1000, ge=0, le=10_000_000)
+    # Admission control for MCP tool calls: in-flight calls across the gateway and per token,
+    # plus a per-token request budget per fixed 60s window. Rejections never queue.
+    mcp_max_concurrent: int = Field(default=32, ge=1, le=1000)
+    mcp_max_concurrent_per_token: int = Field(default=4, ge=0, le=1000)
+    mcp_rate_limit_per_minute: int = Field(default=120, ge=0, le=100_000)
     mcp_export_auto_issue: bool = True
     mcp_export_ttl_seconds: int = Field(default=1800, ge=60, le=86400)
     mcp_export_max_active: int = Field(default=3, ge=1, le=64)
@@ -128,6 +156,14 @@ class Settings(BaseSettings):
         normalized = normalize_locale(value)
         if normalized is None:
             raise ValueError("GATEWAY_MCP_LANGUAGE must be zh or en")
+        return normalized
+
+    @field_validator("log_format")
+    @classmethod
+    def _validate_log_format(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"text", "json"}:
+            raise ValueError("GATEWAY_LOG_FORMAT must be text or json")
         return normalized
 
     @field_validator("master_key")
@@ -161,7 +197,7 @@ class Settings(BaseSettings):
                 raise ConfigError("GATEWAY_DB_URL 的 SQLite URL 缺少数据库文件路径")
             if self.db_host:
                 logger.warning("已配置 GATEWAY_DB_URL，GATEWAY_DB_HOST 等连接项将被忽略")
-            return self
+            return self._check_audit_backend()
         if self.db_host:
             missing = [
                 name
@@ -176,6 +212,14 @@ class Settings(BaseSettings):
                     f"已配置 GATEWAY_DB_HOST 但缺少 {', '.join(missing)}；"
                     "如需使用默认 SQLite 管理库，请清空 GATEWAY_DB_HOST"
                 )
+        return self._check_audit_backend()
+
+    def _check_audit_backend(self) -> "Settings":
+        if self.audit_require_server_backend and self.management_backend == "sqlite":
+            raise ConfigError(
+                "GATEWAY_AUDIT_REQUIRE_SERVER_BACKEND=true 时管理库不能使用 SQLite；"
+                "请配置 GATEWAY_DB_URL 或 GATEWAY_DB_HOST 指向 MySQL/PostgreSQL"
+            )
         return self
 
     @model_validator(mode="after")

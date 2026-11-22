@@ -155,3 +155,73 @@ def test_union_is_conservatively_masked() -> None:
     rows, masked = apply(plan, ["phone"], [("13812341234",)], KEY)
     assert masked == ["phone"]
     assert rows[0][0] != "13812341234"
+
+
+def test_derived_table_alias_is_masked() -> None:
+    rules = [rule("users", "phone", "mask", "phone")]
+    plan = plan_for("SELECT * FROM (SELECT phone AS p FROM users) x", rules)
+    rows, masked = apply(plan, ["p"], [("13812341234",)], KEY)
+    assert rows == [["138****1234"]]
+    assert masked == ["p"]
+
+
+def test_qualified_star_over_derived_table_is_masked() -> None:
+    rules = [rule("users", "phone", "mask", "phone")]
+    plan = plan_for("SELECT x.* FROM (SELECT phone AS p FROM users) x", rules)
+    rows, masked = apply(plan, ["p"], [("13812341234",)], KEY)
+    assert rows == [["138****1234"]]
+    assert masked == ["p"]
+
+
+def test_derived_alias_selected_directly() -> None:
+    rules = [rule("users", "phone", "null")]
+    plan = plan_for("SELECT p FROM (SELECT phone AS p FROM users) x", rules)
+    rows, masked = apply(plan, ["p"], [("13812341234",)], KEY)
+    assert rows == [[None]]
+    assert masked == ["p"]
+
+
+def test_nested_derived_tables_and_cte() -> None:
+    rules = [rule("users", "phone", "mask", "phone")]
+    sql = "WITH c AS (SELECT phone AS p FROM users) SELECT * FROM (SELECT p AS q FROM c) y"
+    plan = plan_for(sql, rules)
+    rows, masked = apply(plan, ["q"], [("13812341234",)], KEY)
+    assert rows == [["138****1234"]]
+    assert masked == ["q"]
+
+
+def test_explicit_cte_column_list_is_masked() -> None:
+    rules = [rule("users", "phone", "mask", "phone")]
+    plan = plan_for("WITH c(p) AS (SELECT phone FROM users) SELECT * FROM c", rules)
+    rows, masked = apply(plan, ["p"], [("13812341234",)], KEY)
+    assert rows == [["138****1234"]]
+    assert masked == ["p"]
+
+
+def test_alias_with_outer_star_is_masked() -> None:
+    rules = [rule("users", "phone", "mask", "phone")]
+    plan = plan_for("SELECT phone AS p, * FROM users", rules)
+    rows, masked = apply(
+        plan,
+        ["p", "id", "phone"],
+        [("13812341234", 1, "13900001111")],
+        KEY,
+    )
+    assert rows == [["138****1234", 1, "139****1111"]]
+    assert masked == ["p", "phone"]
+
+
+def test_derived_aggregate_is_not_masked() -> None:
+    plan = plan_for("SELECT * FROM (SELECT COUNT(phone) AS c FROM users) x")
+    rows, masked = apply(plan, ["c"], [(10,)], KEY)
+    assert rows == [[10]]
+    assert masked == []
+
+
+def test_union_derived_uses_strictest_branch() -> None:
+    rules = [rule("users", "phone", "mask", "phone"), rule("admins", "email", "null")]
+    sql = "SELECT * FROM (SELECT phone AS p FROM users UNION ALL SELECT email AS p FROM admins) x"
+    plan = plan_for(sql, rules)
+    rows, masked = apply(plan, ["p"], [("13812341234",)], KEY)
+    assert rows == [[None]]
+    assert masked == ["p"]

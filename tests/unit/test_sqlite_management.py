@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -10,6 +11,7 @@ import pytest
 from asgi_lifespan import LifespanManager
 from sqlalchemy import text
 
+from app.audit.service import AuditService
 from app.clock import utcnow
 from app.config import Settings
 from app.db.models import (
@@ -67,9 +69,13 @@ async def test_app_boots_without_external_database(sqlite_settings) -> None:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             health = await client.get("/healthz")
+            ready = await client.get("/readyz", headers={"X-Request-ID": "trace-ready"})
             login = await client.get("/admin/login")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert ready.status_code == 200
+    assert ready.json()["checks"]["management_db"] == "ok"
+    assert ready.headers["x-request-id"] == "trace-ready"
     assert login.status_code == 200
     # The default path lives under a directory that does not exist before the first start.
     assert (settings.management_url.database or "").endswith("/nested/gateway.db")
@@ -231,5 +237,22 @@ async def test_missing_actor_columns_and_index_are_added(sqlite_settings) -> Non
         assert {"actor_provider", "actor_id", "actor_name", "actor_trust"} <= audit_columns
         assert "actor_policy" in token_columns
         assert "idx_audit_actor" in audit_indexes
+    finally:
+        await engine.dispose()
+
+
+async def test_audit_cleanup_catchup_state_roundtrip(sqlite_settings) -> None:
+    settings, _ = sqlite_settings
+    engine = create_management_engine(settings)
+    try:
+        await ensure_schema(engine)
+        audit = AuditService(create_session_factory(engine))
+
+        assert await audit.cleanup_due() is True
+        await audit.mark_cleanup_done()
+        assert await audit.cleanup_due() is False
+
+        await audit.mark_cleanup_done(utcnow() - timedelta(hours=21))
+        assert await audit.cleanup_due() is True
     finally:
         await engine.dispose()

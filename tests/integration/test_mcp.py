@@ -536,13 +536,14 @@ async def test_token_auth_and_disable(env):
     missing = await env.client.post("/mcp", json={})
     assert missing.status_code == 401
     assert missing.headers.get("www-authenticate") == "Bearer"
-    assert missing.json() == {"error": "missing_token"}
+    assert missing.json()["error"]["code"] == "missing_token"
+    assert missing.json()["error"]["request_id"] == missing.headers["x-request-id"]
 
     invalid = await env.client.post(
         "/mcp", json={}, headers={"Authorization": "Bearer gw_invalid_token_value"}
     )
     assert invalid.status_code == 401
-    assert invalid.json() == {"error": "invalid_token"}
+    assert invalid.json()["error"]["code"] == "invalid_token"
 
     plaintext, row = await env.services.tokens.create("mcp-user")
     async with mcp_session(env, token=plaintext) as session:
@@ -560,7 +561,7 @@ async def test_token_auth_and_disable(env):
         "/mcp", json={}, headers={"Authorization": f"Bearer {plaintext}"}
     )
     assert disabled.status_code == 401
-    assert disabled.json() == {"error": "invalid_token"}
+    assert disabled.json()["error"]["code"] == "invalid_token"
 
     rows, total = await env.services.audit.query({"status": "denied", "q": "unknown"}, page=1)
     assert total >= 2

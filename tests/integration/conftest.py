@@ -242,7 +242,8 @@ async def env(test_config) -> GatewayEnv:
             log_level="WARNING",
         )
         app = create_app(settings)
-        async with LifespanManager(app):
+        # MySQL over a remote/WSL host makes schema replay slow enough to exceed the 5s default.
+        async with LifespanManager(app, startup_timeout=30, shutdown_timeout=30):
             services = app.state.services
             await services.datasources.create(
                 name="testds",

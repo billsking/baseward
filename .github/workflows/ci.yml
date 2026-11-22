@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -21,6 +25,23 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Ruff
         run: ruff check .
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Check generated runtime requirements
+        run: python scripts/sync_requirements.py --check
+      # --strict also fails on resolution errors, so a broken pin cannot slip through silently.
+      - name: Audit runtime dependencies
+        run: pip-audit --strict --desc -r requirements.txt
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -37,9 +58,48 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: Run unit tests with coverage
-        run: pytest tests/unit -q --cov=app --cov-report=term --cov-report=xml
+        run: >-
+          pytest tests/unit -q --cov=app --cov-report=term --cov-report=xml
+          --cov-fail-under=60
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python-version }}
           path: coverage.xml
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Write integration settings
+        run: |
+          cat > .env.test <<'EOF'
+          TEST_DB_HOST=127.0.0.1
+          TEST_DB_PORT=3306
+          TEST_DB_USER=root
+          TEST_DB_PASSWORD=root
+          TEST_DB_PREFIX=dbgw_test
+          TEST_ADMIN_USER=admin
+          TEST_ADMIN_PASSWORD=admin-test-123
+          EOF
+      - name: Run integration tests
+        run: pytest tests/integration -q -m integration

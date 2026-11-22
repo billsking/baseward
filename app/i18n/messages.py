@@ -32,6 +32,15 @@ MESSAGES: dict[str, dict[str, str]] = {
     "common.status": {"zh-CN": "状态", "en": "Status"},
     "common.duration": {"zh-CN": "耗时", "en": "Duration"},
     "common.actions": {"zh-CN": "操作", "en": "Actions"},
+    # MCP SQL execution guardrails
+    "mcp.query_timeout": {
+        "zh-CN": "查询执行超过 {seconds:g} 秒，已被取消",
+        "en": "The query exceeded {seconds:g}s and was cancelled",
+    },
+    "mcp.write_limit_exceeded": {
+        "zh-CN": "写操作影响 {rows} 行，超过上限 {limit} 行，事务已回滚",
+        "en": "The write affected {rows} rows, exceeding the {limit}-row limit; the transaction was rolled back",
+    },
     # Shell
     "app.title": {"zh-CN": "BaseWard", "en": "BaseWard"},
     "nav.dashboard": {"zh-CN": "仪表盘", "en": "Dashboard"},
@@ -52,6 +61,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "login.username": {"zh-CN": "用户名", "en": "Username"},
     "login.password": {"zh-CN": "密码", "en": "Password"},
     "login.submit": {"zh-CN": "登录", "en": "Sign in"},
+    "login.locked": {"zh-CN": "登录失败次数过多，请在 {seconds} 秒后重试", "en": "Too many failed attempts. Try again in {seconds} seconds."},
     # Pages
     "page.dashboard": {"zh-CN": "仪表盘", "en": "Dashboard"},
     "page.datasources": {"zh-CN": "数据源", "en": "Datasources"},
@@ -332,14 +342,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "token.create_title": {"zh-CN": "创建 Token", "en": "Create token"},
     "token.username": {"zh-CN": "用户名", "en": "Username"},
-    "token.one_enabled_hint": {
-        "zh-CN": "每个用户同时只能有一个启用 Token；停用后立即失效。",
-        "en": "Each user can have one enabled token at a time; disabling takes effect immediately.",
+    "token.expires_at": {"zh-CN": "过期时间", "en": "Expires at"},
+    "token.expires_hint": {
+        "zh-CN": "按北京时间填写，留空表示永不过期；过期后直接认证和派生凭证均失效。",
+        "en": "Use Asia/Shanghai time. Leave blank for no expiry; direct and derived credentials stop working on expiry.",
     },
+    "token.one_enabled_hint": {
+        "zh-CN": "每个用户同时只能有一个未过期的启用 Token；停用或过期后立即失效。",
+        "en": "Each user can have one unexpired enabled token at a time; disabling or expiry takes effect immediately.",
+    },
+    "token.status_expired": {"zh-CN": "已过期", "en": "Expired"},
     "token.list_title": {"zh-CN": "Token 列表", "en": "Tokens"},
     "token.table.prefix": {"zh-CN": "前缀", "en": "Prefix"},
     "token.table.scope": {"zh-CN": "授权范围", "en": "Scope"},
     "token.table.created": {"zh-CN": "创建时间", "en": "Created"},
+    "token.table.expires": {"zh-CN": "过期时间", "en": "Expires"},
+    "token.table.last_used": {"zh-CN": "最近使用", "en": "Last used"},
     "token.table.disabled": {"zh-CN": "停用时间", "en": "Disabled"},
     "token.scope_tooltip": {
         "zh-CN": "已限制数据源 / 表 / 字段",
@@ -542,6 +560,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "audit.event.exchange": {"zh-CN": "凭证换发", "en": "Credential exchange"},
     "audit.event.setting_change": {"zh-CN": "设置变更", "en": "Setting change"},
     "audit.event.policy_change": {"zh-CN": "策略变更", "en": "Policy change"},
+    "audit.event.admin_login": {"zh-CN": "管理员登录", "en": "Admin sign-in"},
     # Settings
     "settings.change_password": {"zh-CN": "修改密码", "en": "Change password"},
     "settings.current_password": {"zh-CN": "当前密码", "en": "Current password"},
@@ -681,9 +700,33 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-CN": "字段选择不能超过 {limit} 个",
         "en": "At most {limit} columns can be selected",
     },
+    "error.auth.ip_not_allowed": {
+        "zh-CN": "请求来源 IP 不在允许列表中",
+        "en": "The requesting source IP is not in the allowlist",
+    },
+    "error.auth.missing_token": {
+        "zh-CN": "缺少 Bearer Token",
+        "en": "Missing bearer token",
+    },
+    "error.auth.invalid_token": {
+        "zh-CN": "Token 无效、已停用或已过期",
+        "en": "The token is invalid, disabled, or expired",
+    },
+    "error.auth.auth_unavailable": {
+        "zh-CN": "认证服务暂时不可用，请稍后重试",
+        "en": "Authentication is temporarily unavailable; please try again later",
+    },
     "error.token.username_required": {
         "zh-CN": "用户名不能为空且长度不超过 {limit}",
         "en": "Username is required and must be at most {limit} characters",
+    },
+    "error.token.expiry_invalid": {
+        "zh-CN": "过期时间格式不正确",
+        "en": "The expiration time format is invalid",
+    },
+    "error.token.expiry_past": {
+        "zh-CN": "过期时间必须晚于当前时间",
+        "en": "The expiration time must be in the future",
     },
     "error.token.actor_policy_invalid": {
         "zh-CN": "actor_policy 必须是 ignore/require 之一",

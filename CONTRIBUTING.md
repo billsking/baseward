@@ -17,6 +17,7 @@ pip install -r requirements-dev.txt
 ```bash
 pytest tests/unit -q             # unit tests, no external services needed
 ruff check .                     # lint
+pip-audit -r requirements.txt    # dependency vulnerability scan (CI gate)
 ```
 
 Integration tests run against a real MySQL server:

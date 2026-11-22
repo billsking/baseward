@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from uuid import uuid4
 
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -11,6 +10,7 @@ from starlette.responses import JSONResponse
 from app.exchange.service import ShortCredentialError
 from app.i18n import t
 from app.netip import client_ip_from_scope
+from app.observability import new_request_id
 from app.security.actor import Actor, ActorError, current_actor, parse_actor_headers
 from app.security.principal import Principal, current_client_ip, current_principal
 
@@ -30,7 +30,7 @@ class BearerAuthMiddleware:
             return
 
         client_ip = client_ip_from_scope(scope, getattr(self.services, "trusted_proxies", ()))
-        request_id = str(uuid4())
+        request_id = new_request_id()
         if not await self.services.mcp_allowlist.is_allowed(client_ip):
             # Allowlist runs before token validation: an address outside the list cannot probe whether a credential is valid.
             logger.warning("channel=mcp 请求被 IP 白名单拒绝 ip=%s", client_ip)
@@ -87,7 +87,10 @@ class BearerAuthMiddleware:
                 request_id, "auth_failure", principal, None, None, None,
                 client_ip, "EXCHANGE_ONLY", t("error.exchange.access_denied"),
             )
-            await self._reject(scope, receive, send, 403, "exchange_only")
+            await self._reject(
+                scope, receive, send, 403, "exchange_only",
+                message=t("error.exchange.access_denied"),
+            )
             return
 
         actor: Actor | None = None
@@ -106,7 +109,10 @@ class BearerAuthMiddleware:
                         request_id, "auth_failure", principal, None, None, None,
                         client_ip, "ACTOR_MISMATCH", t("error.actor.mismatch"),
                     )
-                    await self._reject(scope, receive, send, 403, "actor_mismatch")
+                    await self._reject(
+                        scope, receive, send, 403, "actor_mismatch",
+                        message=t("error.actor.mismatch"),
+                    )
                     return
         elif principal.actor_policy == "require":
             try:
@@ -133,12 +139,28 @@ class BearerAuthMiddleware:
             request_id, "auth_failure", principal, None, None, None,
             client_ip, exc.code, str(exc),
         )
-        await self._reject(scope, receive, send, 403, exc.code.lower())
+        await self._reject(scope, receive, send, 403, exc.code.lower(), message=str(exc))
 
     @staticmethod
     async def _reject(
-        scope, receive, send, status_code: int, error: str, retry_with_credentials: bool = True
+        scope,
+        receive,
+        send,
+        status_code: int,
+        error: str,
+        retry_with_credentials: bool = True,
+        message: str | None = None,
     ) -> None:
         headers = {"WWW-Authenticate": "Bearer"} if retry_with_credentials else None
-        response = JSONResponse({"error": error}, status_code=status_code, headers=headers)
+        response = JSONResponse(
+            {
+                "error": {
+                    "code": error,
+                    "message": message or t(f"error.auth.{error}"),
+                    "request_id": new_request_id(),
+                }
+            },
+            status_code=status_code,
+            headers=headers,
+        )
         await response(scope, receive, send)

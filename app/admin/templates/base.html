@@ -47,7 +47,7 @@
   {% block content %}{% endblock %}
 </main>
 <footer class="footer">{{ t("footer.text") }}</footer>
-<script>window.ADMIN_I18N = {{ js_messages | tojson }};</script>
+<script nonce="{{ request.state.csp_nonce|default('') }}">window.ADMIN_I18N = {{ js_messages | tojson }};</script>
 <script src="/admin/static/app.js"></script>
 {% block scripts %}{% endblock %}
 </body>

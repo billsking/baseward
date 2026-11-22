@@ -71,6 +71,9 @@ sql 必填，必须是本次要导出的那条只读语句：网关会在签发�
 签发请求同一来源地址运行，否则握手会被拒。
 """,
         "error.unauthenticated": "未认证的 MCP 调用",
+        "error.rate_limited": "请求过于频繁：当前 Token 每分钟最多 {limit} 次，请稍后重试。",
+        "error.too_many_concurrent": "网关并发请求过多（上限 {limit}），请稍后重试。",
+        "error.too_many_concurrent_token": "当前 Token 并发请求过多（上限 {limit}），请稍后重试。",
     },
     "en": {
         "instructions": """Database query gateway. Work in this order to reduce round trips:
@@ -110,6 +113,9 @@ sql is required and must be the same read-only statement to export: before issui
 The credential is bound to source_ip in the response (the source IP the gateway saw for this MCP request); run the fetch script from the same source address, or the handshake is rejected.
 """,
         "error.unauthenticated": "Unauthenticated MCP call",
+        "error.rate_limited": "Too many requests: this token is limited to {limit} per minute; retry later.",
+        "error.too_many_concurrent": "The gateway is handling too many concurrent requests (limit {limit}); retry later.",
+        "error.too_many_concurrent_token": "This token has too many concurrent requests (limit {limit}); retry later.",
     },
 }
 

@@ -175,7 +175,11 @@ class ShortCredentialService:
             if not ip_matches(row.source_ip, client_ip):
                 raise ShortCredentialError(SHORT_CREDENTIAL_IP_MISMATCH)
             parent = await session.get(ApiToken, row.parent_token_id)
-            if parent is None or not parent.enabled:
+            if (
+                parent is None
+                or not parent.enabled
+                or (parent.expires_at is not None and parent.expires_at <= now)
+            ):
                 raise ShortCredentialError(PARENT_TOKEN_DISABLED)
             scope = UNRESTRICTED
             if row.scope_json is not None:
